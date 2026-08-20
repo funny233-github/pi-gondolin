@@ -1,0 +1,18 @@
+{
+  "name": "pi-gondolin",
+  "version": "1.0.0",
+  "description": "pi extension that runs pi inside a gondolin micro-VM",
+  "main": "index.js",
+  "scripts": {
+    "install": "node scripts/install.mjs",
+    "uninstall": "node scripts/uninstall.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": "true",
+  "dependencies": {
+    "@earendil-works/gondolin": "^0.12.0"
+  }
+}

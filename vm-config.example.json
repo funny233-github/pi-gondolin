@@ -1,23 +1,37 @@
 {
-  "memory": "6G",
-  "cpus": 8,
-  "rootfs": {
-    "size": "4G"
-  },
-  "sandbox": {
-    "imagePath": "workspace:latest"
-  },
+  // ===== 基础资源 =====
+  "memory": "6G",                         // 内存,支持 K/M/G 后缀
+  "cpus": 8,                              // CPU 核心数
+  "rootfs": { "size": "4G" },             // 磁盘大小(镜像需含 resize2fs/e2fsprogs-extra)
+
+  // ===== 镜像(可选)=====
+  "sandbox": { "imagePath": "workspace:latest" },  // 镜像名 / buildId / 资产目录路径
+
+  // ===== SSH 出站代理(可选;需宿主机 ssh-agent 在跑)=====
   "ssh": {
-    "allowedHosts": [
-      "github.com",
-      "*.github.com"
-    ],
-    "agent": "${SSH_AUTH_SOCK}"
+    "allowedHosts": ["github.com", "*.github.com"], // 允许 ssh 出站的主机白名单
+    "agent": "${SSH_AUTH_SOCK}"          // agent socket;${VAR} 会在启动时替换为宿主环境变量值
   },
-  "tcp": {
-    "game-gw:80": "127.0.0.1:8787"
-  },
+
+  // ===== 假域名 → host 端口映射(可选,用于把 host 服务暴露给 VM)=====
+  // "tcp": { "game-gw:80": "127.0.0.1:8787" },
+
+  // ===== 注入 VM 的环境变量(可选;注意:这里注入的是真值,AI 能看到)=====
   "env": {},
+  // 示例: "env": { "MODE": "dev", "TOKEN": "${MY_TOKEN}" }
+
+  // ===== 额外挂载(可选)=====
+  // 格式 "host路径:guest路径";只写 host 路径则自动挂到 /mnt/<名字>;host 路径必须存在
   "mounts": [],
+  // 示例: "mounts": ["/home/user/Work:/Work", "/home/user/data"]
+
+  // ===== HTTP 密钥注入(可选;VM 里只见占位符,真值在宿主机环境变量)=====
   "secrets": {}
+  // 示例:
+  // "secrets": {
+  //   "GAME_API_KEY": {
+  //     "hosts": ["api.game.com"],          // 只允许发给这个域名
+  //     "valueFromEnv": "GAME_API_KEY"      // 真值从宿主机同名环境变量读取
+  //   }
+  // }
 }

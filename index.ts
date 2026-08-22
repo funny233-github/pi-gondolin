@@ -60,6 +60,62 @@ const GUEST_WORKSPACE = "/workspace";
 const CONFIG_PATH = path.join(import.meta.dirname, "vm-config.json");
 
 /**
+ * Strip // line comments and /* block comments *\/ from JSONC text without
+ * touching strings (so quotes, URLs and escaped chars survive).
+ */
+function stripJsonComments(text: string): string {
+  let out = "";
+  let inString = false;
+  let inLine = false;
+  let inBlock = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    const n = text[i + 1];
+    if (inLine) {
+      if (c === "\n") {
+        inLine = false;
+        out += c;
+      }
+      continue;
+    }
+    if (inBlock) {
+      if (c === "*" && n === "/") {
+        inBlock = false;
+        i++;
+      }
+      continue;
+    }
+    if (inString) {
+      out += c;
+      if (c === "\\") {
+        out += n ?? "";
+        i++;
+      } else if (c === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      continue;
+    }
+    if (c === "/" && n === "/") {
+      inLine = true;
+      i++;
+      continue;
+    }
+    if (c === "/" && n === "*") {
+      inBlock = true;
+      i++;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+/**
  * Recursively replace ${VAR} in strings with the host environment value.
  * Lets the config reference env vars, e.g. "agent": "${SSH_AUTH_SOCK}".
  */
@@ -83,7 +139,7 @@ function expandEnv(value: unknown): unknown {
 function loadConfig(): Record<string, any> {
   try {
     return expandEnv(
-      JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")),
+      JSON.parse(stripJsonComments(fs.readFileSync(CONFIG_PATH, "utf8"))),
     ) as Record<string, any>;
   } catch {
     return {};

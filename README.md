@@ -72,6 +72,7 @@ VM 参数统一由 `vm-config.json` 管理(`npm run install` 首次自动生成;
 }
 ```
 
+> - **支持注释(JSONC)**:配置里可以写 `//` 行注释和 `/* */` 块注释(字符串内的 `//` 不受影响),生成的 `vm-config.json` 自带字段说明
 > - **环境变量插值**:配置里任何字符串支持 `${VAR}` 写法,加载时替换为宿主机同名环境变量的值(深递归,数组/对象内也生效)。例如 `"agent": "${SSH_AUTH_SOCK}"`。
 > - `vm-config.json` 已被 gitignore(本地配置);`vm-config.example.json` 是提交的模板
 > - 密钥类字段只填**环境变量名**(`valueFromEnv`),真值放在宿主机环境变量里,不进代码、不进配置

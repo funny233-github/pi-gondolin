@@ -34,7 +34,46 @@ npm run install
 npx -y @earendil-works/pi-coding-agent -e /pi-gondolin/index.ts
 ```
 
+## 配置文件(vm-config.json)
+
+VM 参数统一由 `vm-config.json` 管理(`npm run install` 首次自动生成;改配置后**重启 pi** 生效)。
+
+| 字段 | 说明 | 默认 |
+|---|---|---|
+| `image` | 镜像(传 `sandbox.imagePath`) | `workspace:latest` |
+| `memory` | 内存 | `6G` |
+| `cpus` | CPU 数 | `8` |
+| `rootfsSize` | rootfs 大小(镜像需含 resize2fs/e2fsprogs-extra) | `4G` |
+| `mounts` | 额外挂载数组,`"host[:guest]"` 格式,裸路径自动挂 `/mnt/<名字>` | `[]` |
+| `ssh.allowedHosts` | SSH 出站白名单(需宿主机 ssh-agent) | `github.com` |
+| `tcp` | guest 假域名 → host 端口映射(如 `"game-gw:80": "127.0.0.1:8787"`) | 无 |
+| `env` | 额外注入 VM 的环境变量 | `{}` |
+| `secrets` | HTTP 密钥注入:`{ "NAME": { "hosts": [...], "valueFromEnv": "ENV" } }` | `{}` |
+
+示例:
+
+```json
+{
+  "image": "workspace:latest",
+  "memory": "6G",
+  "cpus": 8,
+  "rootfsSize": "4G",
+  "mounts": ["/home/user/Work:/Work", "/home/user/data"],
+  "ssh": { "allowedHosts": ["github.com", "my-server.com"] },
+  "tcp": { "game-gw:80": "127.0.0.1:8787" },
+  "env": { "MY_FLAG": "1" },
+  "secrets": {
+    "GAME_API_KEY": { "hosts": ["api.game.com"], "valueFromEnv": "GAME_API_KEY" }
+  }
+}
+```
+
+> - `vm-config.json` 已被 gitignore(本地配置);`vm-config.example.json` 是提交的模板
+> - 密钥类字段只填**环境变量名**(`valueFromEnv`),真值放在宿主机环境变量里,不进代码、不进配置
+> - `secrets` 占位符由 host 在出站 HTTP 时替换,只对 `hosts` 内的域名生效
+
 ## 环境变量
+
 
 | 变量 | 说明 | 默认 |
 |---|---|---|

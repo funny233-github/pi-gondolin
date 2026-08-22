@@ -44,6 +44,7 @@ import {
   RealFSProvider,
   type VirtualProvider,
   VM,
+  createHttpHooks,
 } from "@earendil-works/gondolin";
 
 const GUEST_WORKSPACE = "/workspace";
@@ -56,33 +57,77 @@ const GUEST_WORKSPACE = "/workspace";
  * A bare host path (no ":guest") is mounted at /mnt/<basename>.
  * Host paths that do not exist are skipped with a warning.
  */
-function buildMounts(localCwd: string): Record<string, VirtualProvider> {
+const CONFIG_PATH = path.join(import.meta.dirname, "vm-config.json");
+
+/** Load VM settings from vm-config.json next to this file; {} when missing. */
+function loadConfig(): Record<string, any> {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * SSH egress proxy via the host ssh-agent (the key never enters the VM).
+ * Disabled entirely when the host has no ssh-agent socket.
+ */
+function buildSsh(
+  allowedHosts?: string[],
+): Record<string, unknown> | undefined {
+  const agent = process.env.SSH_AUTH_SOCK;
+  if (!agent) return undefined;
+  const allow =
+    allowedHosts && allowedHosts.length
+      ? allowedHosts
+      : (process.env.GONDOLIN_SSH_ALLOW_HOSTS ?? "github.com")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+  return {
+    allowedHosts: allow,
+    agent,
+    knownHostsFile: `${process.env.HOME}/.ssh/known_hosts`,
+  };
+}
+
+/**
+ * Build the guest mount map: always mount the pi working directory at
+ * /workspace, plus extra mounts from the config file and/or the
+ * GONDOLIN_MOUNTS env var ("hostPath[:guestPath]" separated by ";").
+ * A bare host path (no ":guest") is mounted at /mnt/<basename>.
+ * Host paths that do not exist are skipped with a warning.
+ */
+function buildMounts(
+  localCwd: string,
+  configMounts: string[],
+): Record<string, VirtualProvider> {
   const mounts: Record<string, VirtualProvider> = {
     [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
   };
+  const specs = [...configMounts];
   const extra = process.env.GONDOLIN_MOUNTS;
-  if (extra) {
-    for (const spec of extra.split(";")) {
-      if (!spec.trim()) continue;
-      const idx = spec.indexOf(":");
-      let host: string;
-      let guest: string;
-      if (idx === -1) {
-        host = spec.trim();
-        guest = path.posix.join("/mnt", path.basename(host));
-      } else {
-        host = spec.slice(0, idx).trim();
-        guest = spec.slice(idx + 1).trim();
-      }
-      if (!host || !guest) continue;
-      if (!fs.existsSync(host)) {
-        console.warn(
-          `[pi-gondolin] skipping mount: host path not found: ${host}`,
-        );
-        continue;
-      }
-      mounts[guest] = new RealFSProvider(path.resolve(host));
+  if (extra) specs.push(...extra.split(";"));
+  for (const spec of specs) {
+    if (!spec.trim()) continue;
+    const idx = spec.indexOf(":");
+    let host: string;
+    let guest: string;
+    if (idx === -1) {
+      host = spec.trim();
+      guest = path.posix.join("/mnt", path.basename(host));
+    } else {
+      host = spec.slice(0, idx).trim();
+      guest = spec.slice(idx + 1).trim();
     }
+    if (!host || !guest) continue;
+    if (!fs.existsSync(host)) {
+      console.warn(
+        `[pi-gondolin] skipping mount: host path not found: ${host}`,
+      );
+      continue;
+    }
+    mounts[guest] = new RealFSProvider(path.resolve(host));
   }
   return mounts;
 }
@@ -264,40 +309,43 @@ export default function (pi: ExtensionAPI) {
         ),
       );
 
+      const config = loadConfig();
+      const hooks = createHttpHooks({
+        secrets: Object.fromEntries(
+          Object.entries(config.secrets ?? {}).map(([name, secret]) => [
+            name,
+            {
+              hosts: secret.hosts,
+              value: process.env[secret.valueFromEnv] ?? "",
+            },
+          ]),
+        ),
+      });
+
       const created = await VM.create({
         vfs: {
-          mounts: buildMounts(localCwd),
+          mounts: buildMounts(localCwd, config.mounts ?? []),
         },
-        // Runtime resources (QEMU -m / -smp). The base image stays small;
-        // the root disk grows on demand at boot via qemu-img resize + resize2fs.
-        memory: "6G",
-        cpus: 8,
-        rootfs: { size: "4G" },
-        // SSH egress proxy: guest ssh connects to the host-side proxy; auth
-        // happens on the host via ssh-agent (the key never enters the VM).
-        // Disabled entirely when the host has no ssh-agent socket.
-        ssh: (() => {
-          const agent = process.env.SSH_AUTH_SOCK;
-          if (!agent) return undefined;
-          // comma-separated allowlist, e.g. GONDOLIN_SSH_ALLOW_HOSTS="github.com,my-server.com"
-          const allowHosts = (
-            process.env.GONDOLIN_SSH_ALLOW_HOSTS ?? "github.com"
-          )
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-          return {
-            allowedHosts: allowHosts,
-            agent,
-            knownHostsFile: `${process.env.HOME}/.ssh/known_hosts`,
-          };
-        })(),
+        // Runtime resources and VM options come from vm-config.json
+        // (auto-generated by `npm run install`); values below are defaults.
+        memory: config.memory ?? "6G",
+        cpus: config.cpus ?? 8,
+        rootfs: config.rootfsSize ? { size: config.rootfsSize } : undefined,
+        ...(config.image ? { sandbox: { imagePath: config.image } } : {}),
+        ssh: buildSsh(config.ssh?.allowedHosts),
+        tcp:
+          config.tcp && Object.keys(config.tcp).length
+            ? { hosts: config.tcp }
+            : undefined,
+        httpHooks: hooks.httpHooks,
         env: {
           // Guest ssh/git talks to the host-side proxy whose host key is
           // ephemeral, so skip host-key verification inside the guest (the
           // host still verifies the real upstream against known_hosts).
           GIT_SSH_COMMAND:
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR",
+          ...hooks.env,
+          ...(config.env ?? {}),
         },
       });
 

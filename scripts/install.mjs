@@ -28,13 +28,16 @@ fs.symlinkSync(path.join(root, "node_modules"), nmLink);
 console.log(`linked node_modules -> ${nmLink}`);
 
 // 4) VM config: generate from example if missing, then install a copy
-const cfgExample = path.join(root, "vm-config.example.json");
-const cfgTarget = path.join(root, "vm-config.json");
+const cfgExample = path.join(root, "vm-config.example.jsonc");
+const cfgTarget = path.join(root, "vm-config.jsonc");
 if (!fs.existsSync(cfgTarget)) {
   fs.copyFileSync(cfgExample, cfgTarget);
   console.log(`generated ${cfgTarget} (edit it to customize the VM)`);
 }
-fs.copyFileSync(cfgTarget, path.join(extDir, "vm-config.json"));
-console.log(`installed vm-config.json -> ${path.join(extDir, "vm-config.json")}`);
+const cfgBase = path.basename(cfgTarget);
+// remove legacy .json config copy if present
+fs.rmSync(path.join(extDir, "vm-config.json"), { force: true });
+fs.copyFileSync(cfgTarget, path.join(extDir, cfgBase));
+console.log(`installed ${cfgBase} -> ${path.join(extDir, cfgBase)}`);
 
 console.log("pi-gondolin extension installed. Restart pi to load it.");

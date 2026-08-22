@@ -57,7 +57,7 @@ const GUEST_WORKSPACE = "/workspace";
  * A bare host path (no ":guest") is mounted at /mnt/<basename>.
  * Host paths that do not exist are skipped with a warning.
  */
-const CONFIG_PATH = path.join(import.meta.dirname, "vm-config.json");
+const CONFIG_PATH = path.join(import.meta.dirname, "vm-config.jsonc");
 
 /**
  * Strip // line comments and /* block comments *\/ from JSONC text without

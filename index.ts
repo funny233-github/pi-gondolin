@@ -59,10 +59,32 @@ const GUEST_WORKSPACE = "/workspace";
  */
 const CONFIG_PATH = path.join(import.meta.dirname, "vm-config.json");
 
+/**
+ * Recursively replace ${VAR} in strings with the host environment value.
+ * Lets the config reference env vars, e.g. "agent": "${SSH_AUTH_SOCK}".
+ */
+function expandEnv(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.replace(
+      /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+      (_m, name: string) => process.env[name] ?? "",
+    );
+  }
+  if (Array.isArray(value)) return value.map(expandEnv);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, expandEnv(v)]),
+    );
+  }
+  return value;
+}
+
 /** Load VM settings from vm-config.json next to this file; {} when missing. */
 function loadConfig(): Record<string, any> {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    return expandEnv(
+      JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")),
+    ) as Record<string, any>;
   } catch {
     return {};
   }

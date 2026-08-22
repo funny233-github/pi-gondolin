@@ -11,7 +11,8 @@
     "allowedHosts": [
       "github.com",
       "*.github.com"
-    ]
+    ],
+    "agent": "${SSH_AUTH_SOCK}"
   },
   "tcp": {
     "game-gw:80": "127.0.0.1:8787"

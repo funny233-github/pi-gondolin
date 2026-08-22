@@ -37,6 +37,9 @@ npx -y @earendil-works/pi-coding-agent -e /pi-gondolin/index.ts
 
 ## 配置文件(vm-config.jsonc)
 
+> 完整字段参考见 [`docs/vm-config-reference.md`](docs/vm-config-reference.md)(基于 gondolin `VMOptions` 类型)。
+
+
 VM 参数统一由 `vm-config.jsonc` 管理(`npm run install` 首次自动生成;改配置后**重启 pi** 生效)。
 
 **`vm-config.jsonc` 就是 `VM.create()` 的参数**——除了 `mounts` 和 `secrets` 两个 JSON 无法直接表达的部分(字符串数组 → vfs provider、定义 → http hooks),其余字段全部原样透传给 `VM.create`。

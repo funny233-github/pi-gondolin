@@ -1,15 +1,22 @@
 {
-  "image": "workspace:latest",
   "memory": "6G",
   "cpus": 8,
-  "rootfsSize": "4G",
-  "mounts": [],
+  "rootfs": {
+    "size": "4G"
+  },
+  "sandbox": {
+    "imagePath": "workspace:latest"
+  },
   "ssh": {
-    "allowedHosts": ["github.com", "*.github.com"]
+    "allowedHosts": [
+      "github.com",
+      "*.github.com"
+    ]
   },
   "tcp": {
     "game-gw:80": "127.0.0.1:8787"
   },
   "env": {},
+  "mounts": [],
   "secrets": {}
 }

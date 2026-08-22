@@ -1,0 +1,37 @@
+{
+  // ===== Basic resources =====
+  "memory": "6G",                         // RAM; supports K/M/G suffixes
+  "cpus": 8,                              // CPU cores
+  "rootfs": { "size": "4G" },             // disk size (image needs resize2fs/e2fsprogs-extra)
+
+  // ===== Image (optional) =====
+  "sandbox": { "imagePath": "workspace:latest" },  // image ref / build id / asset dir path
+
+  // ===== SSH egress proxy (optional; requires a host ssh-agent) =====
+  "ssh": {
+    "allowedHosts": ["github.com", "*.github.com"], // ssh-allow host whitelist
+    "agent": "${SSH_AUTH_SOCK}"          // agent socket; ${VAR} is replaced with the host env value at load time
+  },
+
+  // ===== Fake-host -> host port mapping (optional; exposes host services to the VM) =====
+  // "tcp": { "game-gw:80": "127.0.0.1:8787" },
+
+  // ===== Env vars injected into the VM (optional; these are REAL values, the AI can see them) =====
+  "env": {},
+  // e.g. "env": { "MODE": "dev", "TOKEN": "${MY_TOKEN}" }
+
+  // ===== Extra mounts (optional) =====
+  // Format "hostPath:guestPath"; a bare host path is mounted at /mnt/<basename>; host path must exist
+  "mounts": [],
+  // e.g. "mounts": ["/home/user/Work:/Work", "/home/user/data"]
+
+  // ===== HTTP secret injection (optional; the VM only sees placeholders, real values live in host env) =====
+  "secrets": {}
+  // e.g.
+  // "secrets": {
+  //   "GAME_API_KEY": {
+  //     "hosts": ["api.game.com"],          // only sent to this host
+  //     "valueFromEnv": "GAME_API_KEY"      // real value read from the host env var of the same name
+  //   }
+  // }
+}

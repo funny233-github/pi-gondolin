@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "install": "node scripts/install.mjs",
-    "uninstall": "node scripts/uninstall.mjs"
+    "uninstall": "node scripts/uninstall.mjs",
+    "config-init": "node scripts/config-init.mjs"
   },
   "keywords": [],
   "author": "",

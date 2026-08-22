@@ -13,8 +13,9 @@
 ## 安装 / 卸载
 
 ```bash
-npm run install      # 安装依赖 + 注册到 ~/.pi/agent/extensions/gondolin/
-npm run uninstall    # 移除已安装的扩展文件
+npm run install        # 安装依赖 + 注册到 ~/.pi/agent/extensions/gondolin/
+npm run uninstall      # 移除已安装的扩展文件
+npm run config-init    # 从模板重新生成 vm-config.jsonc(覆盖前备份为 .bak)
 ```
 
 `npm run install` 会把 `index.ts` 复制到 `~/.pi/agent/extensions/gondolin/` 并链接 `node_modules`,重启 pi 后生效。

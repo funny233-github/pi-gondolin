@@ -138,7 +138,7 @@ function expandEnv(value: unknown): unknown {
 
 /**
  * Read the HOST's git identity (user.name / user.email) so the VM inherits
- * it. Git respects GIT_AUTHOR_*/GIT_COMMITTER_* env vars over config files,
+ * it. Git respects GIT_AUTHOR_* / GIT_COMMITTER_* env vars over config files,
  * which is how the guest gets the user's real identity.
  */
 function gitIdentity(): { name?: string; email?: string } {

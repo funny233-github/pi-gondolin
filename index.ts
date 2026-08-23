@@ -231,17 +231,38 @@ function shQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
+let cachedMountPrefixes: string[] | null = null;
+
+/**
+ * Collect all guest mount prefixes: /workspace, /mnt (bare mounts), /data,
+ * plus every guest path from the config file and GONDOLIN_MOUNTS.
+ */
+function guestMountPrefixes(): string[] {
+  if (cachedMountPrefixes) return cachedMountPrefixes;
+  const prefixes = [GUEST_WORKSPACE, "/mnt", "/data"];
+  const specs: string[] = [...(loadConfig().mounts ?? [])];
+  const extra = process.env.GONDOLIN_MOUNTS;
+  if (extra) specs.push(...extra.split(";"));
+  for (const spec of specs) {
+    const idx = spec.indexOf(":");
+    const guest = idx === -1 ? null : spec.slice(idx + 1).trim();
+    if (guest) prefixes.push(guest);
+  }
+  cachedMountPrefixes = prefixes;
+  return prefixes;
+}
+
 function toGuestPath(localCwd: string, localPath: string): string {
   // The model lives inside the VM, so it passes guest-visible paths
   // (/workspace/..., /mnt/..., /data/...). Normalize and pass those
   // through directly (normalize also rejects traversal like
   // /workspace/../etc/passwd, which would escape the mount).
   const norm = path.posix.normalize(localPath);
+  const prefixes = guestMountPrefixes();
   if (
-    norm === GUEST_WORKSPACE ||
-    norm.startsWith(`${GUEST_WORKSPACE}/`) ||
-    norm.startsWith("/mnt/") ||
-    norm.startsWith("/data/")
+    prefixes.some(
+      (p) => norm === p || norm.startsWith(`${p}/`),
+    )
   ) {
     return norm;
   }

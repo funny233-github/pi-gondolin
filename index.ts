@@ -240,10 +240,7 @@ let cachedMountPrefixes: string[] | null = null;
 function guestMountPrefixes(): string[] {
   if (cachedMountPrefixes) return cachedMountPrefixes;
   const prefixes = [GUEST_WORKSPACE, "/mnt", "/data"];
-  const specs: string[] = [...(loadConfig().mounts ?? [])];
-  const extra = process.env.GONDOLIN_MOUNTS;
-  if (extra) specs.push(...extra.split(";"));
-  for (const spec of specs) {
+  for (const spec of collectMountSpecs()) {
     const idx = spec.indexOf(":");
     const guest = idx === -1 ? null : spec.slice(idx + 1).trim();
     if (guest) prefixes.push(guest);
@@ -420,9 +417,19 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
  * sandboxfs exec limitation and inherited git identity; injected into the
  * system prompt so the model knows where it is and what to avoid.
  */
-function buildEnvNote(config: Record<string, any>): string {
+/**
+ * All mount specs: from vm-config.jsonc mounts plus GONDOLIN_MOUNTS env.
+ */
+function collectMountSpecs(): string[] {
+  const specs: string[] = [...(loadConfig().mounts ?? [])];
+  const extra = process.env.GONDOLIN_MOUNTS;
+  if (extra) specs.push(...extra.split(";"));
+  return specs;
+}
+
+function buildEnvNote(_config?: Record<string, any>): string {
   const mounts: string[] = [GUEST_WORKSPACE];
-  for (const spec of config.mounts ?? []) {
+  for (const spec of collectMountSpecs()) {
     const idx = spec.indexOf(":");
     if (idx === -1) mounts.push(`/mnt/${path.basename(spec)}`);
     else mounts.push(spec.slice(idx + 1).trim());

@@ -434,6 +434,7 @@ function buildEnvNote(config: Record<string, any>): string {
     "Mounted host directories:",
     list,
     "Important notes:",
+    "- This is a FRESH environment: the VM was just started and everything was reset. Anything not on the mounted host directories is gone (/tmp, /root, installed packages, shell history, env tweaks). Only the mounted host directories listed above persist, because they live on the host. Do NOT assume state from earlier sessions survives.",
     "- Files on mounted directories (sandboxfs) CANNOT be made executable with chmod +x; build/compile artifacts belong on the VM's own disk (e.g. /tmp), not on mounts.",
     "- Git author/committer identity (GIT_AUTHOR_NAME / GIT_COMMITTER_NAME / GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL) is automatically inherited from the host; do NOT run `git config` to set user.name/user.email yourself.",
   ].join("\n");

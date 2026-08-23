@@ -379,6 +379,30 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
   };
 }
 
+/**
+ * Build an English environment note describing the VM, mounted host dirs,
+ * sandboxfs exec limitation and inherited git identity; injected into the
+ * system prompt so the model knows where it is and what to avoid.
+ */
+function buildEnvNote(config: Record<string, any>): string {
+  const mounts: string[] = [GUEST_WORKSPACE];
+  for (const spec of config.mounts ?? []) {
+    const idx = spec.indexOf(":");
+    if (idx === -1) mounts.push(`/mnt/${path.basename(spec)}`);
+    else mounts.push(spec.slice(idx + 1).trim());
+  }
+  const list = mounts.map((m) => `- ${m}`).join("\n");
+  return [
+    "Environment:",
+    "You are running inside a Gondolin micro-VM (Linux). The host directory you started pi in is mounted at /workspace.",
+    "Mounted host directories:",
+    list,
+    "Important notes:",
+    "- Files on mounted directories (sandboxfs) CANNOT be made executable with chmod +x; build/compile artifacts belong on the VM's own disk (e.g. /tmp), not on mounts.",
+    "- Git author/committer identity (GIT_AUTHOR_NAME / GIT_COMMITTER_NAME / GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL) is automatically inherited from the host; do NOT run `git config` to set user.name/user.email yourself.",
+  ].join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
   const localCwd = process.cwd();
 
@@ -541,6 +565,7 @@ export default function (pi: ExtensionAPI) {
       `Current working directory: ${localCwd}`,
       `Current working directory: ${GUEST_WORKSPACE} (Gondolin VM, mounted from host: ${localCwd})`,
     );
-    return { systemPrompt: modified };
+    const note = buildEnvNote(loadConfig());
+    return { systemPrompt: `${modified}\n\n${note}` };
   });
 }

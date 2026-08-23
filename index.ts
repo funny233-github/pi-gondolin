@@ -232,8 +232,23 @@ function shQuote(value: string): string {
 }
 
 function toGuestPath(localCwd: string, localPath: string): string {
-  // pi tools pass absolute local paths; map them into /workspace.
-  const rel = path.relative(localCwd, localPath);
+  // The model lives inside the VM, so it passes guest-visible paths
+  // (/workspace/..., /mnt/..., /data/...). Normalize and pass those
+  // through directly (normalize also rejects traversal like
+  // /workspace/../etc/passwd, which would escape the mount).
+  const norm = path.posix.normalize(localPath);
+  if (
+    norm === GUEST_WORKSPACE ||
+    norm.startsWith(`${GUEST_WORKSPACE}/`) ||
+    norm.startsWith("/mnt/") ||
+    norm.startsWith("/data/")
+  ) {
+    return norm;
+  }
+  // Otherwise treat the path as host-relative / host-absolute and map
+  // it into /workspace (relative to the pi working directory).
+  const abs = path.resolve(localCwd, localPath);
+  const rel = path.relative(localCwd, abs);
   if (rel === "") return GUEST_WORKSPACE;
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
     throw new Error(`path escapes workspace: ${localPath}`);

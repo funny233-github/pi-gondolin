@@ -204,6 +204,15 @@
 "mounts": ["/home/user/Work:/Work", "/home/user/data"]
 ```
 
+### `gitIdentity` — 继承宿主 git 身份
+- 类型:`boolean`;默认 `true`
+- 扩展在宿主机读取 `user.name`/`user.email`,以 `GIT_AUTHOR_NAME`/`GIT_COMMITTER_NAME`/`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` 环境变量注入 VM
+- 这样 VM 里 `git commit` 显示的是你自己的身份,而不是 root/默认账号
+
+```jsonc
+"gitIdentity": true    // 或 false 关闭
+```
+
 ### `secrets` — HTTP 密钥注入
 - 类型:`{ NAME: { hosts: string[], valueFromEnv: string } }`
 - VM 里只见占位符;出站 HTTP 到 `hosts` 内域名时由 host 替换为真值(`valueFromEnv` 指向宿主机环境变量)

@@ -25,6 +25,11 @@
   "mounts": [],
   // e.g. "mounts": ["/home/user/Work:/Work", "/home/user/data"]
 
+  // ===== Git identity inheritance (optional; default true) =====
+  // The host's user.name / user.email are injected as GIT_AUTHOR_*/GIT_COMMITTER_*
+  // so commits inside the VM show your real identity. Set false to disable.
+  // "gitIdentity": false,
+
   // ===== HTTP secret injection (optional; the VM only sees placeholders, real values live in host env) =====
   "secrets": {}
   // e.g.

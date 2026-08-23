@@ -24,6 +24,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 
 import type {
   ExtensionAPI,
@@ -133,6 +134,28 @@ function expandEnv(value: unknown): unknown {
     );
   }
   return value;
+}
+
+/**
+ * Read the HOST's git identity (user.name / user.email) so the VM inherits
+ * it. Git respects GIT_AUTHOR_*/GIT_COMMITTER_* env vars over config files,
+ * which is how the guest gets the user's real identity.
+ */
+function gitIdentity(): { name?: string; email?: string } {
+  const read = (key: string): string | undefined => {
+    try {
+      return (
+        execSync(`git config --get ${key}`, {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        })
+          .trim() || undefined
+      );
+    } catch {
+      return undefined;
+    }
+  };
+  return { name: read("user.name"), email: read("user.email") };
 }
 
 /** Load VM settings from vm-config.json next to this file; {} when missing. */
@@ -381,6 +404,7 @@ export default function (pi: ExtensionAPI) {
       );
 
       const config = loadConfig();
+      const identity = config.gitIdentity === false ? {} : gitIdentity();
       const hooks = createHttpHooks({
         secrets: Object.fromEntries(
           Object.entries(config.secrets ?? {}).map(([name, secret]) => [
@@ -408,6 +432,16 @@ export default function (pi: ExtensionAPI) {
           // host still verifies the real upstream against known_hosts).
           GIT_SSH_COMMAND:
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR",
+          // inherit the host's git identity (disable with "gitIdentity": false)
+          ...(identity.name
+            ? { GIT_AUTHOR_NAME: identity.name, GIT_COMMITTER_NAME: identity.name }
+            : {}),
+          ...(identity.email
+            ? {
+                GIT_AUTHOR_EMAIL: identity.email,
+                GIT_COMMITTER_EMAIL: identity.email,
+              }
+            : {}),
           ...hooks.env,
           ...(config.env ?? {}),
         },

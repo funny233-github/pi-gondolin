@@ -440,6 +440,8 @@ function buildEnvNote(config: Record<string, any>): string {
   ].join("\n");
 }
 
+let envNoteInjected = false;
+
 export default function (pi: ExtensionAPI) {
   const localCwd = process.cwd();
 
@@ -528,6 +530,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     // Start eagerly so the user sees errors early (missing qemu, etc.)
+    envNoteInjected = false; // each fresh session gets one env note
     await ensureVm(ctx);
   });
 
@@ -598,11 +601,23 @@ export default function (pi: ExtensionAPI) {
   // Replace the CWD line in the system prompt so the model sees /workspace
   pi.on("before_agent_start", async (event, ctx) => {
     await ensureVm(ctx);
+    // system prompt: only fix the CWD line (a system-prompt concern).
     const modified = event.systemPrompt.replace(
       `Current working directory: ${localCwd}`,
       `Current working directory: ${GUEST_WORKSPACE} (Gondolin VM, mounted from host: ${localCwd})`,
     );
-    const note = buildEnvNote(loadConfig());
-    return { systemPrompt: `${modified}\n\n${note}` };
+    // user context: inject the environment note as a persistent message on
+    // the FIRST user turn only, so it rides along with the conversation
+    // instead of being baked into the system prompt.
+    const result: Record<string, unknown> = { systemPrompt: modified };
+    if (!envNoteInjected) {
+      envNoteInjected = true;
+      result.message = {
+        customType: "gondolin-env",
+        content: buildEnvNote(loadConfig()),
+        display: true,
+      };
+    }
+    return result;
   });
 }

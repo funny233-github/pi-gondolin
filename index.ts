@@ -263,6 +263,19 @@ function toGuestPath(localCwd: string, localPath: string): string {
   ) {
     return norm;
   }
+  // Relative paths: the model's cwd is /workspace, so resolve them against
+  // the guest workspace first (e.g. README.md -> /workspace/README.md).
+  // This covers the common case where small models prefer relative paths.
+  if (!path.isAbsolute(localPath)) {
+    const guestAbs = path.posix.join(GUEST_WORKSPACE, norm);
+    if (
+      prefixes.some(
+        (p) => guestAbs === p || guestAbs.startsWith(`${p}/`),
+      )
+    ) {
+      return guestAbs;
+    }
+  }
   // Otherwise treat the path as host-relative / host-absolute and map
   // it into /workspace (relative to the pi working directory).
   const abs = path.resolve(localCwd, localPath);
@@ -442,6 +455,7 @@ function buildEnvNote(_config?: Record<string, any>): string {
     list,
     "Important notes:",
     "- This is a FRESH environment: the VM was just started and everything was reset. Anything not on the mounted host directories is gone (/tmp, /root, installed packages, shell history, env tweaks). Only the mounted host directories listed above persist, because they live on the host. Do NOT assume state from earlier sessions survives.",
+    "- Always pass ABSOLUTE guest paths to read/write/edit (e.g. /workspace/xxx, /pi-gondolin/xxx). Relative paths are resolved against /workspace only, so they break if you cd elsewhere first.",
     "- Files on mounted directories (sandboxfs) CANNOT be made executable with chmod +x; build/compile artifacts belong on the VM's own disk (e.g. /tmp), not on mounts.",
     "- Git author/committer identity (GIT_AUTHOR_NAME / GIT_COMMITTER_NAME / GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL) is automatically inherited from the host; do NOT run `git config` to set user.name/user.email yourself.",
   ].join("\n");

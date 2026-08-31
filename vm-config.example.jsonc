@@ -1,35 +1,41 @@
 {
   // ===== Basic resources =====
-  "memory": "6G",                         // RAM; supports K/M/G suffixes
-  "cpus": 8,                              // CPU cores
-  "rootfs": { "size": "4G" },             // disk size (image needs resize2fs/e2fsprogs-extra)
-
+  "memory": "6G", // RAM; supports K/M/G suffixes
+  "cpus": 8, // CPU cores
+  "rootfs": {
+    "size": "4G"
+  }, // disk size (image needs resize2fs/e2fsprogs-extra)
   // ===== Image (optional) =====
-  "sandbox": { "imagePath": "workspace:latest" },  // image ref / build id / asset dir path
-
+  "sandbox": {
+    "imagePath": "workspace:latest"
+  }, // image ref / build id / asset dir path
   // ===== SSH egress proxy (optional; requires a host ssh-agent) =====
   "ssh": {
-    "allowedHosts": ["github.com", "*.github.com"], // ssh-allow host whitelist
-    "agent": "${SSH_AUTH_SOCK}"          // agent socket; ${VAR} is replaced with the host env value at load time
+    "allowedHosts": [
+      "github.com",
+      "*.github.com"
+    ], // ssh-allow host whitelist
+    "agent": "${SSH_AUTH_SOCK}" // agent socket; ${VAR} is replaced with the host env value at load time
   },
-
   // ===== Fake-host -> host port mapping (optional; exposes host services to the VM) =====
   // "tcp": { "game-gw:80": "127.0.0.1:8787" },
-
   // ===== Env vars injected into the VM (optional; these are REAL values, the AI can see them) =====
   "env": {},
   // e.g. "env": { "MODE": "dev", "TOKEN": "${MY_TOKEN}" }
-
   // ===== Extra mounts (optional) =====
   // Format "hostPath:guestPath"; a bare host path is mounted at /mnt/<basename>; host path must exist
   "mounts": [],
   // e.g. "mounts": ["/home/user/Work:/Work", "/home/user/data"]
-
+  // ===== Pi skills mounts (optional) =====
+  // If you use pi skills ( ~/.pi/agent/skills/ ), mount them so the agent can access them:
+  // "mounts": [
+  //   "/home/user/.pi/agent/skills:/root/.pi/agent/skills",
+  // ]
+  // Without this, skills will not trigger because the agent cannot find them in the VM.
   // ===== Git identity inheritance (optional; default true) =====
   // The host's user.name / user.email are injected as GIT_AUTHOR_*/GIT_COMMITTER_*
   // so commits inside the VM show your real identity. Set false to disable.
   // "gitIdentity": false,
-
   // ===== HTTP secret injection (optional; the VM only sees placeholders, real values live in host env) =====
   "secrets": {}
   // e.g.

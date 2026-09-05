@@ -110,6 +110,7 @@ VM 内挂载结果:`/workspace`(启动目录)、`/Work`、`/mnt/data`。
 - **SSH 只支持非交互 exec 通道**:`git clone/push`、`ssh user@host "cmd"` 可用;交互式 shell 与 sftp 被代理拒绝
 - **guest 内 host key 校验已跳过**:扩展自动注入 `GIT_SSH_COMMAND`,git 无需额外配置;真实主机校验由宿主机 `known_hosts` 完成
 - **私钥保管**:仅使用宿主机 ssh-agent,私钥文件不进入 VM
+- **AI 助手运行在宿主机**:所有工具调用会被自动重定向到 VM 执行，技能文件读取逻辑已内置于扩展中
 
 ## 依赖
 

@@ -7,6 +7,9 @@
  * The directory you start `pi` in is mounted read-write at `/workspace` inside
  * the VM.
  *
+ * IMPORTANT: The AI assistant runs on the HOST, but all tool calls are intercepted
+ * by this extension and redirected to execute INSIDE the VM.
+ *
  * How to run:
  *   1. Install dependencies for this repo (so imports resolve):
  *        pnpm install
@@ -290,8 +293,28 @@ function toGuestPath(localCwd: string, localPath: string): string {
 }
 
 function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
+  // Define patterns for skill file paths that should be read from the host
+  // These are the default pi skill directories
+  const skillPathPatterns = [
+    /\/home\/[^/]+\/\.pi\/agent\/skills\//i,
+    /\/root\/\.pi\/agent\/skills\//i,
+  ];
+
+  function isSkillPath(path: string): boolean {
+    return skillPathPatterns.some((pattern) => pattern.test(path));
+  }
+
   return {
     readFile: async (p) => {
+      // Check if this is a skill file path that should be read from host
+      if (isSkillPath(p)) {
+        try {
+          return fs.readFileSync(p, "utf8");
+        } catch (err) {
+          throw new Error(`Could not read skill file ${p}: ${err}`);
+        }
+      }
+
       const guestPath = toGuestPath(localCwd, p);
       const r = await vm.exec(["/bin/cat", guestPath]);
       if (!r.ok) {
@@ -300,6 +323,14 @@ function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
       return r.stdoutBuffer;
     },
     access: async (p) => {
+      // For skill files, check host directly
+      if (isSkillPath(p)) {
+        if (!fs.existsSync(p) || !fs.statSync(p).isFile()) {
+          throw new Error(`skill file not accessible: ${p}`);
+        }
+        return;
+      }
+
       const guestPath = toGuestPath(localCwd, p);
       const r = await vm.exec([
         "/bin/sh",
@@ -311,6 +342,11 @@ function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
       }
     },
     detectImageMimeType: async (p) => {
+      // Skill files are not images, so skip
+      if (isSkillPath(p)) {
+        return null;
+      }
+
       const guestPath = toGuestPath(localCwd, p);
       try {
         // Run through the shell because `file` might live in `/usr/bin` depending on the image
@@ -450,16 +486,17 @@ function buildEnvNote(_config?: Record<string, any>): string {
   const list = mounts.map((m) => `- ${m}`).join("\n");
   return [
     "Environment:",
-    "You are running inside a Gondolin micro-VM based on **Alpine Linux**.",
-    `The host directory you started pi in is mounted at ${GUEST_WORKSPACE}.`,
+    "You are running in a sandboxed environment with a micro-VM for tool execution.",
+    `The host directory you started pi in is mounted at ${GUEST_WORKSPACE} inside the VM.`,
     "Mounted host directories:",
     list,
     "Important notes:",
+    "- Tool executions (read/write/edit/bash) run inside an Alpine Linux micro-VM.",
     "- This is a FRESH environment: the VM was just started and everything was reset. Anything not on the mounted host directories is gone (/tmp, /root, installed packages, shell history, env tweaks). Only the mounted host directories listed above persist, because they live on the host. Do NOT assume state from earlier sessions survives.",
     "- Always pass ABSOLUTE guest paths to read/write/edit (e.g. /workspace/xxx, /pi-gondolin/xxx). Relative paths are resolved against /workspace only, so they break if you cd elsewhere first.",
     "- Files on mounted directories (sandboxfs) CANNOT be made executable with chmod +x; build/compile artifacts belong on the VM's own disk (e.g. /tmp), not on mounts.",
     "- Git author/committer identity (GIT_AUTHOR_NAME / GIT_COMMITTER_NAME / GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL) is automatically inherited from the host; do NOT run `git config` to set user.name/user.email yourself.",
-    "- **Alpine Linux specifics**: Use `apk` for package management, `/bin/sh` is busybox, and many common tools may need to be installed via `apk add`.", 
+    "- **Alpine Linux specifics**: Use `apk` for package management, `/bin/sh` is busybox, and many common tools may need to be installed via `apk add`.",
   ].join("\n");
 }
 

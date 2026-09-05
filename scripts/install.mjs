@@ -30,11 +30,16 @@ console.log(`linked node_modules -> ${nmLink}`);
 // 4) VM config: generate from example if missing, then install a copy
 const cfgExample = path.join(root, "vm-config.example.jsonc");
 const cfgTarget = path.join(root, "vm-config.jsonc");
+const cfgBase = path.basename(cfgTarget);
 if (!fs.existsSync(cfgTarget)) {
   fs.copyFileSync(cfgExample, cfgTarget);
   console.log(`generated ${cfgTarget} (edit it to customize the VM)`);
+} else {
+  // Backup existing config before overwriting
+  const backupPath = path.join(extDir, `${cfgBase}.bak`);
+  fs.copyFileSync(cfgTarget, backupPath);
+  console.log(`backed up ${cfgTarget} -> ${backupPath}`);
 }
-const cfgBase = path.basename(cfgTarget);
 // remove legacy .json config copy if present
 fs.rmSync(path.join(extDir, "vm-config.json"), { force: true });
 fs.copyFileSync(cfgTarget, path.join(extDir, cfgBase));

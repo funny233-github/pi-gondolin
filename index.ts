@@ -450,7 +450,8 @@ function buildEnvNote(_config?: Record<string, any>): string {
   const list = mounts.map((m) => `- ${m}`).join("\n");
   return [
     "Environment:",
-    "You are running inside a Gondolin micro-VM (Linux). The host directory you started pi in is mounted at /workspace.",
+    "You are running inside a Gondolin micro-VM based on **Alpine Linux**.",
+    `The host directory you started pi in is mounted at ${GUEST_WORKSPACE}.`,
     "Mounted host directories:",
     list,
     "Important notes:",
@@ -458,6 +459,7 @@ function buildEnvNote(_config?: Record<string, any>): string {
     "- Always pass ABSOLUTE guest paths to read/write/edit (e.g. /workspace/xxx, /pi-gondolin/xxx). Relative paths are resolved against /workspace only, so they break if you cd elsewhere first.",
     "- Files on mounted directories (sandboxfs) CANNOT be made executable with chmod +x; build/compile artifacts belong on the VM's own disk (e.g. /tmp), not on mounts.",
     "- Git author/committer identity (GIT_AUTHOR_NAME / GIT_COMMITTER_NAME / GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL) is automatically inherited from the host; do NOT run `git config` to set user.name/user.email yourself.",
+    "- **Alpine Linux specifics**: Use `apk` for package management, `/bin/sh` is busybox, and many common tools may need to be installed via `apk add`.", 
   ].join("\n");
 }
 
@@ -622,10 +624,15 @@ export default function (pi: ExtensionAPI) {
   // Replace the CWD line in the system prompt so the model sees /workspace
   pi.on("before_agent_start", async (event, ctx) => {
     await ensureVm(ctx);
-    // system prompt: only fix the CWD line (a system-prompt concern).
-    const modified = event.systemPrompt.replace(
+    // system prompt: fix the CWD line and add Alpine Linux info
+    let modified = event.systemPrompt.replace(
       `Current working directory: ${localCwd}`,
-      `Current working directory: ${GUEST_WORKSPACE} (Gondolin VM, mounted from host: ${localCwd})`,
+      `Current working directory: ${GUEST_WORKSPACE} (Gondolin micro-VM running Alpine Linux, mounted from host: ${localCwd})`,
+    );
+    // Insert a note about Alpine Linux in the system prompt
+    modified = modified.replace(
+      /\n---/,
+      "\n**You are running in an Alpine Linux micro-VM.** Use `apk` for package management and `/bin/sh` is busybox.\n---",
     );
     // user context: inject the environment note as a persistent message on
     // the FIRST user turn only, so it rides along with the conversation

@@ -31,11 +31,26 @@ Root cause in gondolin source: `dist/src/http/utils.js` `closeSharedDispatchers`
 There are two distinct paths that reach this call:
 
 - **A1 — teardown eviction.** On VM shutdown, `closeSharedDispatchers()` closes every cached dispatcher. This is expected and **benign** (the VM is going away).
-- **A2 — runtime idle-TTL eviction (the one that actually bit us).** `pruneSharedDispatchers()` runs at the start of every egress request (`getCheckedDispatcher`) and evicts any dispatcher whose `lastUsedAt` is older than `DEFAULT_SHARED_UPSTREAM_IDLE_TTL_MS` (**30 s**, hard-coded). Critically, **`lastUsedAt` is updated only when a request *dispatches* through the cached dispatcher — it does not track in-flight or queued requests.** So a slow request (>30 s, e.g. a large/slow tarball download, or a burst that queues past the 16-connection limit) makes its dispatcher look "idle"; the next request to *any* origin triggers the prune, `close()` destroys that dispatcher, and its in-flight/queued requests fail with `ClientDestroyedError`. This is a **real runtime failure**, not a benign teardown, and it explains symptom (1): a crash at ~150 s with no exit and no timeout.
+- **A2 — runtime idle-TTL eviction (the one that actually bit us).** `getCheckedDispatcher()` (`http/utils.js:373`) calls `pruneSharedDispatchers()` (`:356`) **at the start of every egress request — before the cache lookup (call site `:377`)** — and that prune evicts any dispatcher whose `lastUsedAt` is older than `DEFAULT_SHARED_UPSTREAM_IDLE_TTL_MS` (**30 s**, hard-coded at `:134`). Critically, **`lastUsedAt` is refreshed only at *dispatch* time** (cache hit `:381`, new dispatcher `:398`) — it does **not** track in-flight or queued requests. So a slow request (>30 s, e.g. a large/slow tarball download, or a burst that queues past the 16-connection limit) makes its dispatcher look "idle"; the next request to *any* origin triggers the prune, `close()` destroys that dispatcher, and requests on it fail with `ClientDestroyedError`. This is a **real runtime failure**, not a benign teardown, and it explains symptom (1): a crash at ~150 s with no exit and no timeout.
+
+  *Verified from source (not inferred):*
+  ```
+  grep -n "pruneSharedDispatchers\|lastUsedAt\|getCheckedDispatcher\|IDLE_TTL_MS" \
+    node_modules/@earendil-works/gondolin/dist/src/http/utils.js
+  # 134: const DEFAULT_SHARED_UPSTREAM_IDLE_TTL_MS = 30 * 1000;
+  # 356: function pruneSharedDispatchers(backend, now = Date.now()) {
+  # 360:   if (now - entry.lastUsedAt <= DEFAULT_SHARED_UPSTREAM_IDLE_TTL_MS) continue;
+  # 373: export function getCheckedDispatcher(backend, info) {
+  # 377:   pruneSharedDispatchers(backend);
+  # 381:   cached.lastUsedAt = Date.now();
+  # 398:   lastUsedAt: Date.now(),
+  ```
+
+  *Caveat:* A2 is the *best-supported* explanation of the ~150 s crash, not a reproduced one. To turn it into a repro, capture the guard's live warning mid-command (see §9).
 
 Relevant eviction call sites / constants (`dist/src/qemu/http.js`, `dist/src/http/utils.js`):
 `resetTaintState` (~line 35), fetch-failure eviction (~936, ~1072), LRU `evictSharedDispatchersIfNeeded`, `pruneSharedDispatchers`.
-`DEFAULT_SHARED_UPSTREAM_CONNECTIONS_PER_ORIGIN = 16`, `DEFAULT_SHARED_UPSTREAM_MAX_ORIGINS = 512`, `DEFAULT_SHARED_UPSTREAM_IDLE_TTL_MS = 30 * 1000`. **These are not configurable** in gondolin 0.12.0 (no option threads through; only the `DEFAULT_*` constants exist).
+`DEFAULT_SHARED_UPSTREAM_CONNECTIONS_PER_ORIGIN = 16` (`:132`), `DEFAULT_SHARED_UPSTREAM_MAX_ORIGINS = 512` (`:133`), `DEFAULT_SHARED_UPSTREAM_IDLE_TTL_MS = 30 * 1000` (`:134`). **These are not configurable** in gondolin 0.12.0 — verified: the three constants are referenced only inside `http/utils.js` (definitions plus uses at `:360`, `:366`, `:394`), and **no `.d.ts` exposes any `idleTtl` / `maxOrigins` / `sharedUpstream` option** (nothing threads through `VM.create`). So "just raise the TTL" is not available without patching gondolin.
 
 ### Bug B — timeout orphans the guest process → hang
 
@@ -72,7 +87,8 @@ Placed in `createGondolinBashOps().exec` — the only durable, reinstall-safe lo
 
 - An `unhandledRejection` handler is installed at module load (before `export default`).
 - It ignores **only** `UND_ERR_DESTROYED` (by `code` set and by case-insensitive message pattern `/UND_ERR_DESTROYED|client is destroyed/i`) and **re-throws everything else**, preserving pi's default crash behavior for real bugs.
-- **Caveat / cost (intentional):** this guard also swallows the **A2 runtime** rejection, which *does* correspond to a real request failure (a guest request was cut). To avoid silently masking it, the guard now `console.warn`s each swallow. It is still only a *symptom* fix for A2 — the underlying request may have failed and been retried by `pnpm`.
+- **Caveat / cost (intentional):** this guard also swallows the **A2 runtime** rejection, which *does* correspond to a real request failure (a guest request was cut). To avoid silently masking it, the guard now `console.warn`s each swallow. It is still only a *symptom* fix for A2 — the underlying request may have failed and been retried by `pnpm` (extra retries, extra latency, extra bandwidth).
+- **The guard cannot tell A1 from A2.** Both surface as `UND_ERR_DESTROYED`, so both are swallowed; `isIgnoredRejection()` keys only on the error code/message and has no notion of *where* the rejection came from. "Re-throws everything else" refers to *other* error codes only. The only way to tell them apart is the `console.warn`: fired **at exit/teardown** ⇒ A1 (benign); fired **mid-command** ⇒ A2 (a real request was cut).
 - A **proper** fix for A2 would be upstream (see §6): make the idle-TTL prune aware of in-flight/queued requests, and/or `.catch()` the `close()` promise.
 
 ### 4b. Process-group kill on timeout/cancel (`ea196ce`, `9599e60`)
@@ -125,6 +141,7 @@ gondolin 0.12.0 depends on undici `^6.21.0` (installed 6.28.0). Some upstream fi
 
 1. **Bug A (teardown + runtime):** in `http/utils.js`, attach `.catch()` (or a no-op handler) to every `dispatcher.close()` in `closeSharedDispatchers` / `evictSharedDispatcher` so the rejection is never unhandled.
 2. **Bug A2 (the real one):** make `pruneSharedDispatchers` track **in-flight/queued** requests (e.g. only evict when the dispatcher has no active requests), and/or expose `IDLE_TTL_MS` as an option. A 30 s idle TTL that ignores in-flight state will cut slow requests.
+   *Caveat on scope:* this is not a one-liner — undici's `Dispatcher`/`Agent` does not directly expose "how many requests are in flight", so gondolin would have to wrap its own counter around `dispatch()`, or rely on a lower-level client-state API. Worth flagging in the issue so it isn't dismissed as trivial.
 3. **Bug B:** make `vm.exec()` timeout/abort terminate the **process group** (e.g. run under `setsid` and `kill -9 -<pgid>`), not just signal the direct child.
 
 ---
@@ -149,6 +166,7 @@ npm run install   # copies index.ts -> ~/.pi/agent/extensions/gondolin/
 
 - Run a long `pnpm install` with a timeout. After it times out, confirm **no orphaned guest process** remains (`ps -eo pid,args | grep '[p]npm'` should be empty), and that pi neither crashes nor hangs.
 - Watch the pi output for `[pi-gondolin] ignored undici destruction rejection:` — if it fires **during** a command (not at exit), that's a signature of Bug A2 (runtime idle-TTL eviction) and worth capturing for an upstream report.
+- **Mitigation (lowers A2 probability without patching):** run pnpm with lower network concurrency to stay well under the 16-connection-per-origin cap, e.g. `pnpm install --network-concurrency=8`. Fewer queued requests ⇒ fewer requests caught mid-flight when a dispatcher is TTL-evicted. It does not remove A2 (a single >30 s request can still be cut); it only lowers the odds.
 
 ---
 

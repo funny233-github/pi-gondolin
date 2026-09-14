@@ -76,8 +76,7 @@ const IGNORED_REJECTION_PATTERN = /UND_ERR_DESTROYED|client is destroyed/i;
 let destroyErrorGuardInstalled = false;
 
 function isIgnoredRejection(reason: unknown): boolean {
-  const code =
-    reason && typeof reason === "object" && (reason as any).code;
+  const code = reason && typeof reason === "object" && (reason as any).code;
   const message =
     reason && typeof (reason as any).message === "string"
       ? (reason as any).message
@@ -198,8 +197,7 @@ function gitIdentity(): { name?: string; email?: string } {
         execSync(`git config --get ${key}`, {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],
-        })
-          .trim() || undefined
+        }).trim() || undefined
       );
     } catch {
       return undefined;
@@ -306,11 +304,7 @@ function toGuestPath(localCwd: string, localPath: string): string {
   // /workspace/../etc/passwd, which would escape the mount).
   const norm = path.posix.normalize(localPath);
   const prefixes = guestMountPrefixes();
-  if (
-    prefixes.some(
-      (p) => norm === p || norm.startsWith(`${p}/`),
-    )
-  ) {
+  if (prefixes.some((p) => norm === p || norm.startsWith(`${p}/`))) {
     return norm;
   }
   // Relative paths: the model's cwd is /workspace, so resolve them against
@@ -318,11 +312,7 @@ function toGuestPath(localCwd: string, localPath: string): string {
   // This covers the common case where small models prefer relative paths.
   if (!path.isAbsolute(localPath)) {
     const guestAbs = path.posix.join(GUEST_WORKSPACE, norm);
-    if (
-      prefixes.some(
-        (p) => guestAbs === p || guestAbs.startsWith(`${p}/`),
-      )
-    ) {
+    if (prefixes.some((p) => guestAbs === p || guestAbs.startsWith(`${p}/`))) {
       return guestAbs;
     }
   }
@@ -483,16 +473,29 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
       // So on timeout/cancel we explicitly `kill -9 -<pgid>` the group started
       // via `setsid`, then fall back to abort for the host-side await.
       const killGroup = async (): Promise<void> => {
-        try {
-          const cat = await vm.exec(["/bin/cat", pgidFile]);
-          const pgid = String(cat.stdout).trim();
-          if (/^\d+$/.test(pgid)) {
-            await vm.exec(["/bin/sh", "-lc", `kill -9 -${pgid}`]);
+        // Grace poll: bash writes the pgid file on startup (tens of ms). On a
+        // very short timeout the file may not be written yet, so retry for a
+        // short window before giving up and falling back to ac.abort().
+        const GRACE_MS = 500;
+        const start = Date.now();
+        let pgid = "";
+        while (Date.now() - start < GRACE_MS) {
+          try {
+            const cat = await vm.exec(["/bin/cat", pgidFile]);
+            const p = String(cat.stdout).trim();
+            if (/^\d+$/.test(p)) {
+              pgid = p;
+              break;
+            }
+          } catch {
+            // file not written yet; keep polling
           }
-        } catch {
-          // pgid file not ready yet (very short timeout) or already gone;
-          // the ac.abort() below is the fallback.
+          await new Promise((r) => setTimeout(r, 20));
         }
+        if (/^\d+$/.test(pgid)) {
+          await vm.exec(["/bin/sh", "-lc", `kill -9 -${pgid}`]);
+        }
+        // else: file never appeared (pathological timeout) -> ac.abort() fallback.
       };
       const killAndAbort = async (): Promise<void> => {
         await killGroup();
@@ -520,16 +523,13 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
         // than just aborting the host-side await. Without this, timeouts
         // orphan the guest process.
         const wrapped = `echo $$ > ${shQuote(pgidFile)}; ${command}`;
-        const proc = vm.exec(
-          ["/usr/bin/setsid", "/bin/bash", "-lc", wrapped],
-          {
-            cwd: guestCwd,
-            signal: ac.signal,
-            env: sanitizeEnv(env),
-            stdout: "pipe",
-            stderr: "pipe",
-          },
-        );
+        const proc = vm.exec(["/usr/bin/setsid", "/bin/bash", "-lc", wrapped], {
+          cwd: guestCwd,
+          signal: ac.signal,
+          env: sanitizeEnv(env),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
         for await (const chunk of proc.output()) {
           onData(chunk.data);
@@ -650,7 +650,10 @@ export default function (pi: ExtensionAPI) {
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR",
           // inherit the host's git identity (disable with "gitIdentity": false)
           ...(identity.name
-            ? { GIT_AUTHOR_NAME: identity.name, GIT_COMMITTER_NAME: identity.name }
+            ? {
+                GIT_AUTHOR_NAME: identity.name,
+                GIT_COMMITTER_NAME: identity.name,
+              }
             : {}),
           ...(identity.email
             ? {

@@ -93,7 +93,19 @@ function installDestroyErrorGuard(): void {
   if (destroyErrorGuardInstalled) return;
   destroyErrorGuardInstalled = true;
   process.on("unhandledRejection", (reason: unknown) => {
-    if (isIgnoredRejection(reason)) return; // benign undici teardown rejection
+    if (isIgnoredRejection(reason)) {
+      // Benign at teardown, but this code can ALSO fire at runtime when a
+      // shared dispatcher is idle-TTL-evicted with an in-flight/queued request
+      // (see http/utils.js pruneSharedDispatchers — it keys off lastUsedAt,
+      // not in-flight state). Log it so runtime request failures are not
+      // silently masked; it's the only signal we have without patching
+      // gondolin.
+      console.warn(
+        "[pi-gondolin] ignored undici destruction rejection:",
+        reason,
+      );
+      return;
+    }
     // Preserve pi's default crash behavior for anything that matters.
     throw reason;
   });
@@ -545,6 +557,9 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
       } finally {
         if (timer) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
+        // Best-effort cleanup of the pgid file in the guest (guest path, so it
+        // must be removed via vm.exec, not fs.unlinkSync which targets host fs).
+        void vm.exec(["/bin/rm", "-f", pgidFile]).catch(() => {});
       }
     },
   };

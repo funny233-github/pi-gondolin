@@ -468,7 +468,40 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
       const guestCwd = toGuestPath(localCwd, cwd);
 
       const ac = new AbortController();
-      const onAbort = () => ac.abort();
+
+      // Temp file that holds this exec's guest process-group id (PGID).
+      // Unique per call so concurrent execs do not collide.
+      const pgidFile = `/tmp/gondolin-exec-${process.pid}-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2)}.pgid`;
+
+      // Kill the guest command's whole process group. vm.exec's `signal`
+      // abort alone does NOT terminate the guest process (it orphans it):
+      // the guest keeps running and holds its egress-proxy connections, which
+      // saturate the shared undici dispatcher and freeze subsequent guest HTTP
+      // (this is what turned a pnpm install past its timeout into a hang).
+      // So on timeout/cancel we explicitly `kill -9 -<pgid>` the group started
+      // via `setsid`, then fall back to abort for the host-side await.
+      const killGroup = async (): Promise<void> => {
+        try {
+          const cat = await vm.exec(["/bin/cat", pgidFile]);
+          const pgid = String(cat.stdout).trim();
+          if (/^\d+$/.test(pgid)) {
+            await vm.exec(["/bin/sh", "-lc", `kill -9 -${pgid}`]);
+          }
+        } catch {
+          // pgid file not ready yet (very short timeout) or already gone;
+          // the ac.abort() below is the fallback.
+        }
+      };
+      const killAndAbort = async (): Promise<void> => {
+        await killGroup();
+        ac.abort();
+      };
+
+      const onAbort = (): void => {
+        killAndAbort();
+      };
       signal?.addEventListener("abort", onAbort, { once: true });
 
       let timedOut = false;
@@ -476,25 +509,34 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
         timeout && timeout > 0
           ? setTimeout(() => {
               timedOut = true;
-              ac.abort();
+              killAndAbort();
             }, timeout * 1000)
           : undefined;
 
       try {
-        // `/bin/bash -lc` for a familiar environment (pipelines, expansions, etc.)
-        const proc = vm.exec(["/bin/bash", "-lc", command], {
-          cwd: guestCwd,
-          signal: ac.signal,
-          env: sanitizeEnv(env),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+        // Run under `setsid` so the command becomes a process-group leader
+        // (its PID == PGID); we write that PGID to pgidFile so a timeout or
+        // cancel can kill the entire tree (bash + pnpm + descendants) rather
+        // than just aborting the host-side await. Without this, timeouts
+        // orphan the guest process.
+        const wrapped = `echo $$ > ${shQuote(pgidFile)}; ${command}`;
+        const proc = vm.exec(
+          ["/usr/bin/setsid", "/bin/bash", "-lc", wrapped],
+          {
+            cwd: guestCwd,
+            signal: ac.signal,
+            env: sanitizeEnv(env),
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
 
         for await (const chunk of proc.output()) {
           onData(chunk.data);
         }
 
         const r = await proc;
+        if (timedOut) throw new Error(`timeout:${timeout}`);
         return { exitCode: r.exitCode };
       } catch (err) {
         if (signal?.aborted) throw new Error("aborted");

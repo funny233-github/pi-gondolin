@@ -54,6 +54,53 @@ import {
 const GUEST_WORKSPACE = "/workspace";
 
 /**
+ * Gondolin teardown race guard.
+ *
+ * When the VM shuts down, Gondolin's egress proxy destroys its undici agents
+ * (see node_modules/@earendil-works/gondolin/dist/src/http/utils.js
+ * `closeSharedDispatchers`/`evictSharedDispatcher`). Those call
+ * `dispatcher.close()` inside a try/catch that only catches *synchronous*
+ * throws, so the returned promise's rejection is left unhandled. If the agent
+ * is already destroyed (or has an in-flight request), undici rejects it with
+ * `ClientDestroyedError` / `UND_ERR_DESTROYED`
+ * (undici dispatcher-base.js, the `kDestroyed` branch). That unhandled
+ * rejection rides up through pi's `uncaughtException` handler and pi prints
+ * "pi exiting due to uncaughtException" on an otherwise clean shutdown.
+ *
+ * This is benign: it only happens at exit and carries no useful information.
+ * We swallow just that error code and defer everything else to Node's default
+ * handling so real bugs are still surfaced.
+ */
+const IGNORED_REJECTION_CODES = new Set(["UND_ERR_DESTROYED"]);
+const IGNORED_REJECTION_PATTERN = /UND_ERR_DESTROYED|client is destroyed/i;
+let destroyErrorGuardInstalled = false;
+
+function isIgnoredRejection(reason: unknown): boolean {
+  const code =
+    reason && typeof reason === "object" && (reason as any).code;
+  const message =
+    reason && typeof (reason as any).message === "string"
+      ? (reason as any).message
+      : typeof reason === "string"
+        ? reason
+        : undefined;
+  return Boolean(
+    (code != null && IGNORED_REJECTION_CODES.has(String(code))) ||
+      (typeof message === "string" && IGNORED_REJECTION_PATTERN.test(message)),
+  );
+}
+
+function installDestroyErrorGuard(): void {
+  if (destroyErrorGuardInstalled) return;
+  destroyErrorGuardInstalled = true;
+  process.on("unhandledRejection", (reason: unknown) => {
+    if (isIgnoredRejection(reason)) return; // benign undici teardown rejection
+    // Preserve pi's default crash behavior for anything that matters.
+    throw reason;
+  });
+}
+
+/**
  * Build the guest mount map: always mount the pi working directory at
  * /workspace, plus optional extra mounts from GONDOLIN_MOUNTS, a
  * semicolon-separated list of "hostPath[:guestPath]" entries, e.g.
@@ -501,6 +548,10 @@ function buildEnvNote(_config?: Record<string, any>): string {
 }
 
 let envNoteInjected = false;
+
+// Guard against the benign undici teardown rejection above so a clean VM
+// shutdown is not reported as a fatal crash.
+installDestroyErrorGuard();
 
 export default function (pi: ExtensionAPI) {
   const localCwd = process.cwd();

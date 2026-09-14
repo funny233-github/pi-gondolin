@@ -28,6 +28,20 @@ Earlier analysis conflated these; they are separate. Note that **A1 and A2 share
 
 Root cause in gondolin source: `dist/src/http/utils.js` `closeSharedDispatchers` / `evictSharedDispatcher` call `entry.dispatcher.close()` inside a `try/catch` that only catches **synchronous** throws. The promise returned by `close()` is **not** `.catch()`-ed, so any rejection is left unhandled and rides up through pi's `uncaughtException` handler.
 
+**Two candidate rejection sources — only one actually fires.** When a dispatcher is torn down with work in flight, two promises could reject:
+- **(L1) the `dispatcher.close()` promise.** Not `.catch()`-ed → becomes `unhandledRejection`. **This is the crash source.**
+- **(L2) the in-flight `fetch()`** (`qemu/http.js:925`, `await fetcher(...)`). **This one *is* handled** — every call site wraps it: `:470` inside `handleHttpDataWithWriter` (outer `catch` at `:730`), `:609` (async-IIFE `catch` at `:620`), `:692` (`catch` at `:701`), each turning the error into a 502/400 guest response. So L2 does **not** reach `unhandledRejection`.
+
+  *Consequence for the fix:* §7 recommendation 1 is therefore **sufficient** for the crash — but it has to cover every `close()`.
+
+**Where `close()` is called (all without `.catch()`):** only two functions, reached from several sites:
+- `closeSharedDispatchers` — `http/utils.js:336` (teardown; called from `qemu/net.js:213`, `:270`).
+- `evictSharedDispatcher` — `http/utils.js:350`, called from `pruneSharedDispatchers` (`:362`), `evictSharedDispatchersIfNeeded` (`:370`), `resetTaintState` (`qemu/http.js:35`, run in *every* request's `finally`), and two fetch-failure catches (`qemu/http.js:936`, `:1072`).
+
+  So the minimal upstream change is **2 lines** (add `.catch()` inside those two functions), not 7.
+
+**Extra finding — collateral eviction.** `qemu/http.js:936` (and `:1072`) evict the origin's dispatcher *on fetch failure*. By the time a failure surfaces, `getCheckedDispatcher` may already have installed a **fresh replacement** under the same origin key — so the failure handler closes the *healthy* new dispatcher too, amplifying the outage. Worth mentioning upstream alongside the missing `.catch()`.
+
 There are two distinct paths that reach this call:
 
 - **A1 — teardown eviction.** On VM shutdown, `closeSharedDispatchers()` closes every cached dispatcher. This is expected and **benign** (the VM is going away).
@@ -35,7 +49,7 @@ There are two distinct paths that reach this call:
 
   *Verified from source (not inferred):*
   ```
-  grep -n "pruneSharedDispatchers\|lastUsedAt\|getCheckedDispatcher\|IDLE_TTL_MS" \
+  grep -nE "pruneSharedDispatchers|lastUsedAt|getCheckedDispatcher|IDLE_TTL_MS" \
     node_modules/@earendil-works/gondolin/dist/src/http/utils.js
   # 134: const DEFAULT_SHARED_UPSTREAM_IDLE_TTL_MS = 30 * 1000;
   # 356: function pruneSharedDispatchers(backend, now = Date.now()) {
@@ -98,7 +112,7 @@ Each exec now:
 2. Writes that PGID to a per-exec temp file (`/tmp/gondolin-exec-<hostpid>-<ts>-<rand>.pgid`) as the guest shell's first action. (The prefix is the **host** process pid; uniqueness comes from host-pid + timestamp + random.)
 3. On **timeout or signal abort**, runs `kill -9 -<pgid>` in the guest to tear down the **whole process tree** (bash + pnpm + descendants), then `ac.abort()` as a host-side fallback.
 4. **Grace poll** (`9599e60`): if the pgid file is not written yet (pathological very-short timeout), retry reading it for up to 500 ms (every 20 ms) before falling back to abort.
-5. **Cleanup** (`60a49c7`): the pgid file is removed from the guest in `finally` (via `vm.exec(['/bin/rm','-f', ...])`, since it is a guest path and `fs.unlinkSync` would target the host).
+5. **Cleanup** (`60a49c7`): the pgid file is removed from the guest in `finally` (via `vm.exec(['/bin/rm','-f', ...])`, since it is a guest path and `fs.unlinkSync` would target the host). Note the `finally` runs on the **host-side** promise, so it still executes after a guest group-kill — cleanup is not skipped on the timeout path.
 
 **Why this is correct:**
 - `kill -9 -<pgid>` targets the process **group**, so grandchildren are killed too (unlike signaling only the direct child).
@@ -139,7 +153,8 @@ gondolin 0.12.0 depends on undici `^6.21.0` (installed 6.28.0). Some upstream fi
 
 ## 7. Recommended upstream fixes (gondolin)
 
-1. **Bug A (teardown + runtime):** in `http/utils.js`, attach `.catch()` (or a no-op handler) to every `dispatcher.close()` in `closeSharedDispatchers` / `evictSharedDispatcher` so the rejection is never unhandled.
+1. **Bug A (teardown + runtime):** add `.catch()` (or a no-op handler) inside the **two** functions that call `dispatcher.close()` — `closeSharedDispatchers` (`http/utils.js:336`) and `evictSharedDispatcher` (`:350`). That one change covers all 7 call sites (§2). No other `.catch()` is needed for the crash: the in-flight `fetch` (L2) is already caught at its call sites.
+   Also worth fixing alongside it: the fetch-failure eviction (`qemu/http.js:936`, `:1072`) can close a freshly-installed healthy dispatcher (collateral eviction, §2).
 2. **Bug A2 (the real one):** make `pruneSharedDispatchers` track **in-flight/queued** requests (e.g. only evict when the dispatcher has no active requests), and/or expose `IDLE_TTL_MS` as an option. A 30 s idle TTL that ignores in-flight state will cut slow requests.
    *Caveat on scope:* this is not a one-liner — undici's `Dispatcher`/`Agent` does not directly expose "how many requests are in flight", so gondolin would have to wrap its own counter around `dispatch()`, or rely on a lower-level client-state API. Worth flagging in the issue so it isn't dismissed as trivial.
 3. **Bug B:** make `vm.exec()` timeout/abort terminate the **process group** (e.g. run under `setsid` and `kill -9 -<pgid>`), not just signal the direct child.
@@ -172,6 +187,6 @@ npm run install   # copies index.ts -> ~/.pi/agent/extensions/gondolin/
 
 ## 10. Honesty summary
 
-- **Confirmed:** timeout orphans the guest process; `setsid` + group kill terminates it; the TTL prune keys off `lastUsedAt` (dispatch time) and ignores in-flight state; `IDLE_TTL_MS`/`MAX_ORIGINS` are hard-coded; the original crash was a runtime event (not exit/teardown).
+- **Confirmed:** timeout orphans the guest process; `setsid` + group kill terminates it; the TTL prune keys off `lastUsedAt` (dispatch time) and ignores in-flight state; `IDLE_TTL_MS`/`MAX_ORIGINS` are hard-coded; the original crash was a runtime event (not exit/teardown); the crash source is the **`close()` promise rejection (L1)** — the in-flight `fetch` (L2) is already caught at all three call sites; `close()` is called in exactly **two** functions (`http/utils.js:336`, `:350`) reachable from 7 sites.
 - **Inferred (not measured):** that orphaned processes saturate the dispatcher and cause the hang; that the ~150 s crash was specifically A2 rather than a fetch-failure eviction or a misremembered time.
 - **Not addressed by this fix:** the A2 *runtime request failure* itself — the guard hides its symptom; the underlying guest request may still be cut. That needs an upstream fix.

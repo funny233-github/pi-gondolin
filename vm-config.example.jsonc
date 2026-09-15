@@ -36,6 +36,21 @@
   // The host's user.name / user.email are injected as GIT_AUTHOR_*/GIT_COMMITTER_*
   // so commits inside the VM show your real identity. Set false to disable.
   // "gitIdentity": false,
+  // ===== Git-in-VM hardening (optional; recommended) =====
+  // git runs inside the VM (as root) against the mounted host repo. Because sandboxfs
+  // strips exec bits and forces host ownership, git needs a few tweaks to work cleanly:
+  //   safe.directory        -> avoid the "dubious ownership" fatal on the mounted repo
+  //   core.fileMode=false   -> ignore exec-bit noise in `git status`/diffs
+  //   GIT_TERMINAL_PROMPT=0 -> don't block waiting for input when there's no TTY
+  // Inject them via the VM env (GIT_CONFIG_KEY_N/VALUE_N is git's env-based config):
+  // "env": {
+  //   "GIT_CONFIG_COUNT": "2",
+  //   "GIT_CONFIG_KEY_0": "safe.directory",
+  //   "GIT_CONFIG_VALUE_0": "*",
+  //   "GIT_CONFIG_KEY_1": "core.fileMode",
+  //   "GIT_CONFIG_VALUE_1": "false",
+  //   "GIT_TERMINAL_PROMPT": "0"
+  // },
   // ===== HTTP secret injection (optional; the VM only sees placeholders, real values live in host env) =====
   "secrets": {}
   // e.g.

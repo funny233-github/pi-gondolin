@@ -29,6 +29,10 @@
   // ===== Pi skills (auto-mounted) =====
   // pi skills (~/.pi/agent/skills/) are mounted read-only automatically by the
   // extension, so the agent can access them in the VM without any config here.
+  // ===== @earendil-works/pi-coding-agent (auto-mounted) =====
+  // The full pi-coding-agent package (docs + source) is mounted read-only at
+  // /node_modules/@earendil-works/pi-coding-agent by the extension, so the agent
+  // can read pi docs and trace the source; the <docs> prompt section points here.
   // ===== Git identity inheritance (optional; default true) =====
   // The host's user.name / user.email are injected as GIT_AUTHOR_*/GIT_COMMITTER_*
   // so commits inside the VM show your real identity. Set false to disable.

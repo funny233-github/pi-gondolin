@@ -41,6 +41,7 @@ import {
   createWriteTool,
   type EditOperations,
   getAgentDir,
+  getPackageDir,
   loadSkills,
   type ReadOperations,
   type WriteOperations,
@@ -56,6 +57,7 @@ import {
 } from "@earendil-works/gondolin";
 
 const GUEST_WORKSPACE = "/workspace";
+const PI_CODING_AGENT_GUEST_PATH = "/node_modules/@earendil-works/pi-coding-agent";
 
 /**
  * Gondolin teardown race guard.
@@ -287,6 +289,31 @@ function buildSkillMounts(localCwd: string): Record<string, VirtualProvider> {
   return mounts;
 }
 
+/**
+ * Mount @earendil-works/pi-coding-agent (docs + source) into the VM at a fixed
+ * path so the agent can read pi docs and trace the implementation from one
+ * location. getPackageDir() locates the installed package on the host (it
+ * searches upward from dist/); the whole package is mounted read-only via
+ * ReadonlyProvider so the agent can read/explore but not modify it. Best-effort:
+ * never blocks VM boot.
+ */
+function buildPiCodingAgentMount(
+  onWarn?: (message: string) => void,
+): Record<string, VirtualProvider> {
+  const mounts: Record<string, VirtualProvider> = {};
+  try {
+    const src = getPackageDir();
+    if (!src || !fs.existsSync(src)) {
+      onWarn?.(`skipping @earendil-works/pi-coding-agent mount: package dir not found: ${src}`);
+      return mounts;
+    }
+    mounts[PI_CODING_AGENT_GUEST_PATH] = new ReadonlyProvider(new RealFSProvider(src));
+  } catch (err) {
+    console.warn(`[pi-gondolin] failed to mount @earendil-works/pi-coding-agent: ${err}`);
+  }
+  return mounts;
+}
+
 function buildMounts(
   localCwd: string,
   configMounts: string[],
@@ -294,6 +321,7 @@ function buildMounts(
 ): Record<string, VirtualProvider> {
   const mounts: Record<string, VirtualProvider> = {
     [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
+    ...buildPiCodingAgentMount(onWarn),
     ...buildSkillMounts(localCwd),
   };
   const specs = [...configMounts];
@@ -623,6 +651,26 @@ function collectMountSpecs(): string[] {
  * This replaces the old approach of injecting a duplicate chat message and
  * string-replacing the CWD line, which conflicted with the structured prompt
  * (the model kept trusting pi's own <cwd> section over the embedded note).
+/**
+ * Override the built-in <docs> section. pi core builds it with the host install
+ * path (getPackageDir() result), which does not exist inside the VM. Point it at
+ * the fixed @earendil-works/pi-coding-agent mount so the agent reads pi docs (and
+ * can trace source) from one stable path. Content mirrors the built-in section
+ * exactly; only the three root paths change.
+ */
+function buildDocsSection(): string {
+  const base = PI_CODING_AGENT_GUEST_PATH;
+  return `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: ${base}/README.md
+- Additional docs: ${base}/docs
+- Examples: ${base}/examples (extensions, custom tools, SDK)
+- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
+- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+}
+
+/**
  * It is applied via `event.systemPromptOptions.sections` in before_agent_start
  * so it lives in the diffable, cache-friendly structured prompt.
  */
@@ -830,7 +878,12 @@ export default function (pi: ExtensionAPI) {
     const options = event.systemPromptOptions;
     options.cwd = GUEST_WORKSPACE;
     const gondolin = buildGondolinSection(loadConfig());
-    if (options.sections) options.sections.gondolin = gondolin;
-    else options.sections = { gondolin: gondolin };
+    const docs = buildDocsSection();
+    if (options.sections) {
+      options.sections.gondolin = gondolin;
+      options.sections.docs = docs;
+    } else {
+      options.sections = { gondolin: gondolin, docs: docs };
+    }
   });
 }

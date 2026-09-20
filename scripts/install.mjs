@@ -27,22 +27,28 @@ fs.rmSync(nmLink, { recursive: true, force: true });
 fs.symlinkSync(path.join(root, "node_modules"), nmLink);
 console.log(`linked node_modules -> ${nmLink}`);
 
-// 4) VM config: generate from example if missing, then install a copy
+// 4) VM config: ensure the project source of truth exists, back up the
+// previously-installed copy, then install a fresh copy into the extension dir.
 const cfgExample = path.join(root, "vm-config.example.jsonc");
 const cfgTarget = path.join(root, "vm-config.jsonc");
 const cfgBase = path.basename(cfgTarget);
+const extCfg = path.join(extDir, cfgBase);
 if (!fs.existsSync(cfgTarget)) {
   fs.copyFileSync(cfgExample, cfgTarget);
   console.log(`generated ${cfgTarget} (edit it to customize the VM)`);
-} else {
-  // Backup existing config before overwriting
-  const backupPath = path.join(extDir, `${cfgBase}.bak`);
-  fs.copyFileSync(cfgTarget, backupPath);
-  console.log(`backed up ${cfgTarget} -> ${backupPath}`);
+}
+// Back up the previously-installed extension config before overwriting it.
+// The project-root file is the source of truth; the installed copy (extCfg) is
+// what gondolin actually reads and what gets overwritten, so that is what we
+// preserve. Gated on extCfg existing so a fresh install doesn't emit a stale .bak.
+if (fs.existsSync(extCfg)) {
+  const backupPath = `${extCfg}.bak`;
+  fs.copyFileSync(extCfg, backupPath);
+  console.log(`backed up installed ${extCfg} -> ${backupPath}`);
 }
 // remove legacy .json config copy if present
 fs.rmSync(path.join(extDir, "vm-config.json"), { force: true });
-fs.copyFileSync(cfgTarget, path.join(extDir, cfgBase));
-console.log(`installed ${cfgBase} -> ${path.join(extDir, cfgBase)}`);
+fs.copyFileSync(cfgTarget, extCfg);
+console.log(`installed ${cfgBase} -> ${extCfg}`);
 
 console.log("pi-gondolin extension installed. Restart pi to load it.");

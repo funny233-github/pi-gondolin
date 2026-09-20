@@ -604,6 +604,7 @@ function buildGondolinSection(_config?: Record<string, any>): string {
     `Additional host directories are mounted here too:\n${list}`,
     "Rules for working correctly in this VM:",
     "- This is a FRESH VM: anything not on a mounted host directory is wiped when the VM starts. /tmp, /root, installed packages, shell history and environment tweaks do NOT survive between turns or sessions. Only the mounted host directories persist, so do not assume state from an earlier session exists.",
+    "- If something you expected is missing (a file, installed tool, running process), the VM may have reset - e.g., after pi restarted. Only /workspace persists across restarts.",
     `Always use ABSOLUTE guest paths for read/write/edit (for example ${GUEST_WORKSPACE}/README.md). Relative paths resolve against ${GUEST_WORKSPACE} only and break once you cd elsewhere.`,
     "- Files on mounted (sandboxfs) directories CANNOT be marked executable with chmod +x; build/compile into the VM's own disk (for example /tmp), not into a mount.",
     "- Package management uses apk (/bin/sh is busybox); many common tools must be installed with `apk add` first.",

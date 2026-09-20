@@ -46,6 +46,7 @@ import {
 
 import {
   RealFSProvider,
+  type SshOptions,
   type VirtualProvider,
   VM,
   createHttpHooks,
@@ -235,14 +236,14 @@ function loadConfig(): Record<string, any> {
  */
 function buildSsh(
   ssh?: Record<string, any>,
-): Record<string, unknown> | undefined {
+): SshOptions | undefined {
   const agent = process.env.SSH_AUTH_SOCK;
   if (!agent || !ssh) return undefined;
   return {
     ...ssh,
     agent,
     knownHostsFile: `${process.env.HOME}/.ssh/known_hosts`,
-  };
+  } as SshOptions;
 }
 
 /**
@@ -358,7 +359,7 @@ function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
       // Check if this is a skill file path that should be read from host
       if (isSkillPath(p)) {
         try {
-          return fs.readFileSync(p, "utf8");
+          return fs.readFileSync(p);
         } catch (err) {
           throw new Error(`Could not read skill file ${p}: ${err}`);
         }
@@ -645,13 +646,15 @@ export default function (pi: ExtensionAPI) {
       const identity = config.gitIdentity === false ? {} : gitIdentity();
       const hooks = createHttpHooks({
         secrets: Object.fromEntries(
-          Object.entries(config.secrets ?? {}).map(([name, secret]) => [
-            name,
-            {
-              hosts: secret.hosts,
-              value: process.env[secret.valueFromEnv] ?? "",
-            },
-          ]),
+          Object.entries(config.secrets ?? {}).map(
+            ([name, secret]: [string, any]) => [
+              name,
+              {
+                hosts: secret.hosts,
+                value: process.env[secret.valueFromEnv] ?? "",
+              },
+            ],
+          ),
         ),
       });
 

@@ -40,12 +40,15 @@ import {
   createReadTool,
   createWriteTool,
   type EditOperations,
+  getAgentDir,
+  loadSkills,
   type ReadOperations,
   type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 
 import {
   RealFSProvider,
+  ReadonlyProvider,
   type SshOptions,
   type VirtualProvider,
   VM,
@@ -253,6 +256,37 @@ function buildSsh(
  * A bare host path (no ":guest") is mounted at /mnt/<basename>.
  * Host paths that do not exist are skipped with a warning.
  */
+/**
+ * Collect read-only mounts for pi's installed skills.
+ *
+ * Uses pi's authoritative skill discovery (loadSkills) so the mounted paths
+ * match exactly what the agent already sees in its prompt. Each skill's
+ * baseDir is mounted read-only via ReadonlyProvider, so the agent can
+ * read/explore/copy skills in the VM but cannot modify them. The parent
+ * skills/ dir resolves to these children automatically (gondolin virtual
+ * mount semantics), so `ls skills/` lists every mounted skill.
+ */
+function buildSkillMounts(localCwd: string): Record<string, VirtualProvider> {
+  const mounts: Record<string, VirtualProvider> = {};
+  try {
+    const { skills } = loadSkills({
+      cwd: localCwd,
+      agentDir: getAgentDir(),
+      skillPaths: [],
+      includeDefaults: true,
+    });
+    for (const skill of skills) {
+      const baseDir = skill.baseDir;
+      if (!baseDir || !fs.existsSync(baseDir)) continue;
+      mounts[baseDir] = new ReadonlyProvider(new RealFSProvider(baseDir));
+    }
+  } catch (err) {
+    // Skill discovery is best-effort; never block VM boot on it.
+    console.warn(`[pi-gondolin] skill discovery failed: ${err}`);
+  }
+  return mounts;
+}
+
 function buildMounts(
   localCwd: string,
   configMounts: string[],
@@ -260,6 +294,7 @@ function buildMounts(
 ): Record<string, VirtualProvider> {
   const mounts: Record<string, VirtualProvider> = {
     [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
+    ...buildSkillMounts(localCwd),
   };
   const specs = [...configMounts];
   const extra = process.env.GONDOLIN_MOUNTS;

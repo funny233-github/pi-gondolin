@@ -26,12 +26,9 @@
   // Format "hostPath:guestPath"; a bare host path is mounted at /mnt/<basename>; host path must exist
   "mounts": [],
   // e.g. "mounts": ["/home/user/Work:/Work", "/home/user/data"]
-  // ===== Pi skills mounts (optional) =====
-  // If you use pi skills ( ~/.pi/agent/skills/ ), mount them so the agent can access them:
-  // "mounts": [
-  //   "/home/user/.pi/agent/skills:/root/.pi/agent/skills",
-  // ]
-  // Without this, skills will not trigger because the agent cannot find them in the VM.
+  // ===== Pi skills (auto-mounted) =====
+  // pi skills (~/.pi/agent/skills/) are mounted read-only automatically by the
+  // extension, so the agent can access them in the VM without any config here.
   // ===== Git identity inheritance (optional; default true) =====
   // The host's user.name / user.email are injected as GIT_AUTHOR_*/GIT_COMMITTER_*
   // so commits inside the VM show your real identity. Set false to disable.

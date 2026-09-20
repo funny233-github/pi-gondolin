@@ -580,7 +580,17 @@ function collectMountSpecs(): string[] {
   return specs;
 }
 
-function buildEnvNote(_config?: Record<string, any>): string {
+/**
+ * Build the content of the <gondolin> system-prompt section: a single,
+ * authoritative description of the sandbox VM and the rules for working in it.
+ *
+ * This replaces the old approach of injecting a duplicate chat message and
+ * string-replacing the CWD line, which conflicted with the structured prompt
+ * (the model kept trusting pi's own <cwd> section over the embedded note).
+ * It is applied via `event.systemPromptOptions.sections` in before_agent_start
+ * so it lives in the diffable, cache-friendly structured prompt.
+ */
+function buildGondolinSection(_config?: Record<string, any>): string {
   const mounts: string[] = [GUEST_WORKSPACE];
   for (const spec of collectMountSpecs()) {
     const idx = spec.indexOf(":");
@@ -589,22 +599,19 @@ function buildEnvNote(_config?: Record<string, any>): string {
   }
   const list = mounts.map((m) => `- ${m}`).join("\n");
   return [
-    "Environment:",
-    "You are running in a sandboxed environment with a micro-VM for tool execution.",
-    `The host directory you started pi in is mounted at ${GUEST_WORKSPACE} inside the VM.`,
-    "Mounted host directories:",
-    list,
-    "Important notes:",
-    "- Tool executions (read/write/edit/bash) run inside an Alpine Linux micro-VM.",
-    "- This is a FRESH environment: the VM was just started and everything was reset. Anything not on the mounted host directories is gone (/tmp, /root, installed packages, shell history, env tweaks). Only the mounted host directories listed above persist, because they live on the host. Do NOT assume state from earlier sessions survives.",
-    "- Always pass ABSOLUTE guest paths to read/write/edit (e.g. /workspace/xxx, /pi-gondolin/xxx). Relative paths are resolved against /workspace only, so they break if you cd elsewhere first.",
-    "- Files on mounted directories (sandboxfs) CANNOT be made executable with chmod +x; build/compile artifacts belong on the VM's own disk (e.g. /tmp), not on mounts.",
-    "- Git author/committer identity (GIT_AUTHOR_NAME / GIT_COMMITTER_NAME / GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL) is automatically inherited from the host; do NOT run `git config` to set user.name/user.email yourself.",
-    "- **Alpine Linux specifics**: Use `apk` for package management, `/bin/sh` is busybox, and many common tools may need to be installed via `apk add`.",
+    `You are running inside a Gondolin micro-VM (Alpine Linux) that sandbox-pi uses to execute every tool (read/write/edit/bash). The host project directory you started pi in is mounted read-write at ${GUEST_WORKSPACE}, which is your current working directory.`,
+    `Additional host directories are mounted here too:\n${list}`,
+    "Rules for working correctly in this VM:",
+    "- This is a FRESH VM: anything not on a mounted host directory is wiped when the VM starts. /tmp, /root, installed packages, shell history and environment tweaks do NOT survive between turns or sessions. Only the mounted host directories persist, so do not assume state from an earlier session exists.",
+    `Always use ABSOLUTE guest paths for read/write/edit (for example ${GUEST_WORKSPACE}/README.md). Relative paths resolve against ${GUEST_WORKSPACE} only and break once you cd elsewhere.`,
+    "- Files on mounted (sandboxfs) directories CANNOT be marked executable with chmod +x; build/compile into the VM's own disk (for example /tmp), not into a mount.",
+    "- Package management uses apk (/bin/sh is busybox); many common tools must be installed with `apk add` first.",
+    "- Git author/committer identity is inherited from the host via GIT_AUTHOR_NAME / GIT_COMMITTER_NAME / GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL; do NOT run `git config` to set user.name/user.email.",
+    "- SSH/git outbound to whitelisted hosts goes through a host-side ssh-agent proxy; private keys never enter the VM. Interactive shells and sftp are not supported.",
   ].join("\n");
 }
 
-let envNoteInjected = false;
+
 
 // Guard against the benign undici teardown rejection above so a clean VM
 // shutdown is not reported as a fatal crash.
@@ -701,7 +708,6 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     // Start eagerly so the user sees errors early (missing qemu, etc.)
-    envNoteInjected = false; // each fresh session gets one env note
     await ensureVm(ctx);
   });
 
@@ -769,31 +775,20 @@ export default function (pi: ExtensionAPI) {
     return { operations: createGondolinBashOps(vm, localCwd) };
   });
 
-  // Replace the CWD line in the system prompt so the model sees /workspace
+  // Rewrite the structured system prompt in place (the documented mechanism,
+  // not a duplicate chat message or string surgery):
+  //  - point <cwd> at the guest mount so the model never sees the host path
+  //    and cannot get confused about where it is,
+  //  - add a dedicated <gondolin> section with the sandbox rules.
+  // Pi diffs only the changed sections, so this is single-sourced and
+  // cache-friendly (models that accept mid-conversation system messages keep
+  // their cached prefix; others replay once per change).
   pi.on("before_agent_start", async (event, ctx) => {
     await ensureVm(ctx);
-    // system prompt: fix the CWD line and add Alpine Linux info
-    let modified = event.systemPrompt.replace(
-      `Current working directory: ${localCwd}`,
-      `Current working directory: ${GUEST_WORKSPACE} (Gondolin micro-VM running Alpine Linux, mounted from host: ${localCwd})`,
-    );
-    // Insert a note about Alpine Linux in the system prompt
-    modified = modified.replace(
-      /\n---/,
-      "\n**You are running in an Alpine Linux micro-VM.** Use `apk` for package management and `/bin/sh` is busybox.\n---",
-    );
-    // user context: inject the environment note as a persistent message on
-    // the FIRST user turn only, so it rides along with the conversation
-    // instead of being baked into the system prompt.
-    const result: Record<string, unknown> = { systemPrompt: modified };
-    if (!envNoteInjected) {
-      envNoteInjected = true;
-      result.message = {
-        customType: "gondolin-env",
-        content: buildEnvNote(loadConfig()),
-        display: true,
-      };
-    }
-    return result;
+    const options = event.systemPromptOptions;
+    options.cwd = GUEST_WORKSPACE;
+    const gondolin = buildGondolinSection(loadConfig());
+    if (options.sections) options.sections.gondolin = gondolin;
+    else options.sections = { gondolin: gondolin };
   });
 }

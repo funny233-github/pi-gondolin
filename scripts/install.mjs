@@ -27,19 +27,20 @@ fs.rmSync(nmLink, { recursive: true, force: true });
 fs.symlinkSync(path.join(root, "node_modules"), nmLink);
 console.log(`linked node_modules -> ${nmLink}`);
 
-// 4) VM config: bootstrap vm-config.jsonc into the extension dir from the
-// example template. gondolin reads the config from the extension dir
-// (import.meta.dirname), so that is where it lives; the example only seeds a
-// fresh install and is never overwritten here (edit the installed copy to
-// customize, or run `npm run config-init` to reset it from the template).
+// 4) VM config: refresh vm-config.jsonc in the extension dir from the example
+// template. gondolin reads the config from the extension dir (import.meta.dirname),
+// so that is where it lives. Back up a pre-existing config before overwriting it.
 const cfgExample = path.join(root, "vm-config.example.jsonc");
 const cfgBase = "vm-config.jsonc";
 const extCfg = path.join(extDir, cfgBase);
 if (fs.existsSync(extCfg)) {
-  console.log(`using existing ${extCfg}`);
-} else if (fs.existsSync(cfgExample)) {
+  const backupPath = `${extCfg}.bak`;
+  fs.copyFileSync(extCfg, backupPath);
+  console.log(`backed up existing ${extCfg} -> ${backupPath}`);
+}
+if (fs.existsSync(cfgExample)) {
   fs.copyFileSync(cfgExample, extCfg);
-  console.log(`generated ${extCfg} (edit it to customize the VM)`);
+  console.log(`installed ${cfgBase} -> ${extCfg}`);
 } else {
   console.warn(`no ${cfgBase}: template not found at ${cfgExample}`);
 }

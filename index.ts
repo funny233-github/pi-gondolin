@@ -256,6 +256,7 @@ function buildSsh(
 function buildMounts(
   localCwd: string,
   configMounts: string[],
+  onWarn?: (message: string) => void,
 ): Record<string, VirtualProvider> {
   const mounts: Record<string, VirtualProvider> = {
     [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
@@ -277,9 +278,8 @@ function buildMounts(
     }
     if (!host || !guest) continue;
     if (!fs.existsSync(host)) {
-      console.warn(
-        `[pi-gondolin] skipping mount: host path not found: ${host}`,
-      );
+      const message = `skipping mount: host path not found: ${host}`;
+      onWarn?.(message);
       continue;
     }
     mounts[guest] = new RealFSProvider(path.resolve(host));
@@ -664,7 +664,10 @@ export default function (pi: ExtensionAPI) {
         ...config,
         ssh: buildSsh(config.ssh),
         vfs: {
-          mounts: buildMounts(localCwd, config.mounts ?? []),
+          mounts: buildMounts(localCwd, config.mounts ?? [], (message) => {
+            ctx?.ui.notify(`Gondolin: ${message}`, "warning");
+            console.warn(`[pi-gondolin] ${message}`);
+          }),
         },
         httpHooks: hooks.httpHooks,
         env: {

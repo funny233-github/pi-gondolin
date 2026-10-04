@@ -854,6 +854,39 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
 }
 
 /**
+ * Mirror a truncated bash full-output log from the host into the guest VM.
+ *
+ * The harness writes the complete (untruncated) output to
+ * `<os.tmpdir()>/pi-bash-<id>.log` on the HOST filesystem, but the command and
+ * any later `cat <path>` run INSIDE the VM (a separate filesystem), so that
+ * file is invisible to the model and the "read full output" recovery loop
+ * fails (harness re-sends the same call -> empty loop).
+ *
+ * On this host os.tmpdir() === /tmp, so the guest path string is identical to
+ * the one shown to the model; we just copy the host file into the guest's /tmp
+ * (which persists across calls) so the model's cat actually hits it.
+ */
+async function mirrorBashFullOutputToVm(
+  activeVm: VM,
+  fullOutputPath?: string,
+): Promise<void> {
+  if (!fullOutputPath || !fs.existsSync(fullOutputPath)) return;
+  try {
+    const data = fs.readFileSync(fullOutputPath);
+    const guestPath = path.join("/tmp", path.basename(fullOutputPath));
+    // Mirror the raw bytes (no re-encoding) so the guest file is identical to
+    // what the harness wrote on the host.
+    await activeVm.fs.writeFile(guestPath, data);
+  } catch (err) {
+    // Non-fatal: the model still receives the truncated tail; this only
+    // improves recovery of the full output.
+    console.error(
+      `[gondolin] failed to mirror bash full-output log to VM: ${err}`,
+    );
+  }
+}
+
+/**
  * Build an English environment note describing the VM, mounted host dirs,
  * sandboxfs exec limitation and inherited git identity; injected into the
  * system prompt so the model knows where it is and what to avoid.
@@ -1082,7 +1115,14 @@ export default function (pi: ExtensionAPI) {
       const tool = createBashTool(localCwd, {
         operations: createGondolinBashOps(activeVm, localCwd),
       });
-      return tool.execute(id, params, signal, onUpdate);
+      const result = await tool.execute(id, params, signal, onUpdate);
+      // Make the full-output log reachable from inside the VM (see
+      // mirrorBashFullOutputToVm) so a truncated `cat <path>` recovery works.
+      const fullOutputPath = (result as {
+        details?: { fullOutputPath?: string };
+      }).details?.fullOutputPath;
+      await mirrorBashFullOutputToVm(activeVm, fullOutputPath);
+      return result;
     },
   });
 

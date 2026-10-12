@@ -20,6 +20,9 @@
   // ===== Fake-host -> host port mapping (optional; exposes host services to the VM) =====
   // "tcp": { "game-gw:80": "127.0.0.1:8787" },
   // ===== Env vars injected into the VM (optional; these are REAL values, the AI can see them) =====
+  // The host environment is NOT inherited: guest commands only see pi's own
+  // PI_* vars plus TERM/locale. Declare anything else the VM needs here —
+  // "${VAR}" is replaced with the host value of that variable at load time.
   "env": {},
   // e.g. "env": { "MODE": "dev", "TOKEN": "${MY_TOKEN}" }
   // ===== Extra mounts (optional) =====

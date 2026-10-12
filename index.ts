@@ -741,15 +741,50 @@ async function executeGondolinGrep(
   };
 }
 
-function sanitizeEnv(
+/**
+ * Host environment variables a guest command may see.
+ *
+ * pi's bash tool hands its whole `process.env` to `operations.exec` (its
+ * `getShellEnv()` is `{ ...process.env, PATH }`), so without a filter every
+ * host secret (API keys, tokens), the desktop session (DISPLAY, DBUS,
+ * SSH_AUTH_SOCK) and host toolchain paths leak into the VM. Only the entries
+ * below are forwarded; anything else the guest needs must be declared
+ * explicitly in `vm-config.jsonc`'s `env`, which already supports
+ * `"${HOST_VAR}"` interpolation.
+ */
+const GUEST_ENV_ALLOW = new Set([
+  // pi sets these for the model (the system prompt says they can be read).
+  "PI_CODING_AGENT",
+  "PI_SESSION_ID",
+  "PI_SESSION_FILE",
+  "PI_PROVIDER",
+  "PI_MODEL",
+  "PI_REASONING_LEVEL",
+  // terminal / locale, so TUI-aware commands behave.
+  "TERM",
+  "COLORTERM",
+  "NO_COLOR",
+  "FORCE_COLOR",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+]);
+
+/**
+ * Allowlist-filter pi's shell env before handing it to a guest command.
+ * PATH/HOME are deliberately dropped: the host's PATH points at binaries that
+ * do not exist in the guest, and the guest already sets its own PATH/HOME.
+ */
+function filterGuestEnv(
   env?: NodeJS.ProcessEnv,
 ): Record<string, string> | undefined {
   if (!env) return undefined;
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
-    if (typeof v === "string") out[k] = v;
+    if (typeof v !== "string") continue;
+    if (GUEST_ENV_ALLOW.has(k) || k.startsWith("LC_")) out[k] = v;
   }
-  return out;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
@@ -826,7 +861,7 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
         const proc = vm.exec(["/usr/bin/setsid", "/bin/bash", "-lc", wrapped], {
           cwd: guestCwd,
           signal: ac.signal,
-          env: sanitizeEnv(env),
+          env: filterGuestEnv(env),
           stdout: "pipe",
           stderr: "pipe",
         });

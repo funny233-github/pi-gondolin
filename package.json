@@ -6,7 +6,7 @@
   "scripts": {
     "install": "node scripts/install.mjs",
     "uninstall": "node scripts/uninstall.mjs",
-    "config-init": "node scripts/config-init.mjs"
+    "config-reset": "node scripts/config-reset.mjs"
   },
   "keywords": [],
   "author": "",

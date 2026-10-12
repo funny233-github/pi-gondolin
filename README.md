@@ -15,7 +15,7 @@
 ```bash
 npm run install        # 安装依赖 + 注册到 ~/.pi/agent/extensions/gondolin/
 npm run uninstall      # 移除已安装的扩展文件
-npm run config-init    # 从模板重新生成 vm-config.jsonc(覆盖前备份为 .bak)
+npm run config-reset   # 从模板覆盖 vm-config.jsonc(覆盖前备份为 .bak)
 ```
 
 `npm run install` 会把 `index.ts` 复制到 `~/.pi/agent/extensions/gondolin/` 并链接 `node_modules`,重启 pi 后生效。
@@ -40,7 +40,7 @@ npx -y @earendil-works/pi-coding-agent -e /pi-gondolin/index.ts
 > 完整字段参考见 [`docs/vm-config-reference.md`](docs/vm-config-reference.md)(基于 gondolin `VMOptions` 类型)。
 
 
-VM 参数统一由 `vm-config.jsonc` 管理(位于扩展目录 `~/.pi/agent/extensions/gondolin/`)。模板 `vm-config.example.jsonc` 是**唯一需要编辑的源**——改它之后跑 `npm run install`(或 `npm run config-init`)即可刷新到扩展目录,覆盖前自动备份为 `.bak`,重启 pi 生效。
+VM 参数统一由 `vm-config.jsonc` 管理(位于扩展目录 `~/.pi/agent/extensions/gondolin/`)。模板 `vm-config.example.jsonc` 是**唯一需要编辑的源**——改它之后跑 `npm run config-reset` 刷新到扩展目录(当前配置先备份为 `.bak`),重启 pi 生效。`npm run install` 是**非破坏性**的:只在扩展目录**没有** `vm-config.jsonc` 时用模板补一份,已有配置原样保留、不覆盖、不备份。
 
 **`vm-config.jsonc` 就是 `VM.create()` 的参数**——除了 `mounts` 和 `secrets` 两个 JSON 无法直接表达的部分(字符串数组 → vfs provider、定义 → http hooks),其余字段全部原样透传给 `VM.create`。
 
@@ -78,7 +78,7 @@ VM 参数统一由 `vm-config.jsonc` 管理(位于扩展目录 `~/.pi/agent/exte
 
 > - **支持注释(JSONC)**:配置里可以写 `//` 行注释和 `/* */` 块注释(字符串内的 `//` 不受影响),生成的 `vm-config.jsonc` 自带字段说明
 > - **环境变量插值**:配置里任何字符串支持 `${VAR}` 写法,加载时替换为宿主机同名环境变量的值(深递归,数组/对象内也生效)。例如 `"agent": "${SSH_AUTH_SOCK}"`。
-> - `vm-config.example.jsonc` 是提交的源模板(在此编辑配置);`npm run install` 刷新到扩展目录 `vm-config.jsonc`(覆盖前自动备份为 `.bak`,不在仓库内)
+> - `vm-config.example.jsonc` 是提交的源模板(在此编辑配置);`npm run install` 仅在扩展目录**没有** `vm-config.jsonc` 时用模板补一份(非破坏性);要强制刷新用 `npm run config-reset`(当前配置先备份为 `.bak`,不在仓库内)
 > - 密钥类字段只填**环境变量名**(`valueFromEnv`),真值放在宿主机环境变量里,不进代码、不进配置
 > - `secrets` 占位符由 host 在出站 HTTP 时替换,只对 `hosts` 内的域名生效
 

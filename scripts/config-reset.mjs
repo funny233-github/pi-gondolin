@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Regenerate the installed vm-config.jsonc from the example template.
-// The current config (if any) is backed up to vm-config.jsonc.bak first.
+// Reset the installed vm-config.jsonc from the example template: overwrite it
+// with the template after backing the current file up to vm-config.jsonc.bak.
+// (`npm run install` never overwrites an existing config; this is the explicit,
+// destructive refresh.)
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";

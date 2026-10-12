@@ -854,19 +854,24 @@ function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
 }
 
 /**
- * Mirror a truncated bash full-output log from the host into the guest VM.
+ * Mirror a truncated full-output file from the host into the guest VM.
  *
- * The harness writes the complete (untruncated) output to
- * `<os.tmpdir()>/pi-bash-<id>.log` on the HOST filesystem, but the command and
- * any later `cat <path>` run INSIDE the VM (a separate filesystem), so that
- * file is invisible to the model and the "read full output" recovery loop
- * fails (harness re-sends the same call -> empty loop).
+ * Whenever the harness truncates a tool result it writes the complete
+ * (untruncated) output to `<os.tmpdir()>/pi-<tool>-<id>.<ext>` on the HOST
+ * filesystem and reports that path in the result's `details.fullOutputPath`.
+ * All producers share pi's `writeOutputFile` convention, so the field name is
+ * the same everywhere: bash -> `pi-bash-*.log`, MCP tools and resources ->
+ * `pi-mcp-*.txt`, codemode -> `pi-codemode-*.txt`.
+ *
+ * But the commands and any later `cat <path>` run INSIDE the VM (a separate
+ * filesystem), so the host file is invisible to the model and the "read full
+ * output" recovery loop fails (harness re-sends the same call -> empty loop).
  *
  * On this host os.tmpdir() === /tmp, so the guest path string is identical to
  * the one shown to the model; we just copy the host file into the guest's /tmp
  * (which persists across calls) so the model's cat actually hits it.
  */
-async function mirrorBashFullOutputToVm(
+async function mirrorFullOutputToVm(
   activeVm: VM,
   fullOutputPath?: string,
 ): Promise<void> {
@@ -877,11 +882,14 @@ async function mirrorBashFullOutputToVm(
     // Mirror the raw bytes (no re-encoding) so the guest file is identical to
     // what the harness wrote on the host.
     await activeVm.fs.writeFile(guestPath, data);
+    // The copy is a read-only snapshot of the harness output (`writeFile` has
+    // no mode option), so make it read-only best-effort.
+    await activeVm.exec(["/bin/chmod", "444", guestPath]).catch(() => {});
   } catch (err) {
     // Non-fatal: the model still receives the truncated tail; this only
     // improves recovery of the full output.
     console.error(
-      `[gondolin] failed to mirror bash full-output log to VM: ${err}`,
+      `[gondolin] failed to mirror full-output file to VM: ${err}`,
     );
   }
 }
@@ -1115,14 +1123,7 @@ export default function (pi: ExtensionAPI) {
       const tool = createBashTool(localCwd, {
         operations: createGondolinBashOps(activeVm, localCwd),
       });
-      const result = await tool.execute(id, params, signal, onUpdate);
-      // Make the full-output log reachable from inside the VM (see
-      // mirrorBashFullOutputToVm) so a truncated `cat <path>` recovery works.
-      const fullOutputPath = (result as {
-        details?: { fullOutputPath?: string };
-      }).details?.fullOutputPath;
-      await mirrorBashFullOutputToVm(activeVm, fullOutputPath);
-      return result;
+      return tool.execute(id, params, signal, onUpdate);
     },
   });
 
@@ -1160,6 +1161,19 @@ export default function (pi: ExtensionAPI) {
   pi.on("user_bash", (_event, ctx) => {
     if (!vm) return;
     return { operations: createGondolinBashOps(vm, localCwd) };
+  });
+
+  // Keep the harness's spilled full-output files reachable from inside the VM.
+  // Every tool that truncates its result records the host path it spilled to in
+  // `details.fullOutputPath` (bash, MCP tools/resources, codemode), so one
+  // generic handler covers them all — see mirrorFullOutputToVm. Tools that
+  // truncate inline (read/grep/find) have no such field and are skipped.
+  pi.on("tool_result", async (event, ctx) => {
+    const fullOutputPath = (
+      event.details as { fullOutputPath?: unknown } | undefined
+    )?.fullOutputPath;
+    if (typeof fullOutputPath !== "string") return;
+    await mirrorFullOutputToVm(await ensureVm(ctx), fullOutputPath);
   });
 
   // Rewrite the structured system prompt in place (the documented mechanism,

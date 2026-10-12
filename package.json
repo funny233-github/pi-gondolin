@@ -14,11 +14,11 @@
   "type": "module",
   "private": "true",
   "dependencies": {
-    "@earendil-works/gondolin": "^0.12.0"
+    "@earendil-works/gondolin": "^0.13.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.86.1",
-    "@types/node": "^22.20.4",
-    "typescript": "5.7"
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
   }
 }
